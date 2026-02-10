@@ -5,13 +5,6 @@ Main Streamlit application — the UI for the Claim Verifier.
 
 Run with:
     streamlit run app.py
-
-Features:
-- Submit a claim for verification
-- See verdict with color coding (True/False/Partial/Not Enough Evidence)
-- View reasoning and citations
-- Expandable "Show Agent Thinking" section for transparency
-- Knowledge base stats in sidebar
 """
 
 import streamlit as st
@@ -33,37 +26,110 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CUSTOM CSS
+# CUSTOM CSS — Dark mode compatible
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown("""
 <style>
+    /* ── Verdict boxes ── */
     .verdict-box {
-        padding: 20px;
+        padding: 18px 22px;
         border-radius: 10px;
         margin: 10px 0;
         font-size: 18px;
         font-weight: bold;
     }
-    .verdict-true    { background-color: #d4edda; color: #155724; border: 2px solid #28a745; }
-    .verdict-false   { background-color: #f8d7da; color: #721c24; border: 2px solid #dc3545; }
-    .verdict-partial { background-color: #fff3cd; color: #856404; border: 2px solid #ffc107; }
-    .verdict-unknown { background-color: #e2e3e5; color: #383d41; border: 2px solid #6c757d; }
+    .verdict-true    { background-color: #1a3d2b; color: #6fcf97; border: 2px solid #27ae60; }
+    .verdict-false   { background-color: #3d1a1a; color: #eb5757; border: 2px solid #e74c3c; }
+    .verdict-partial { background-color: #3d3010; color: #f2c94c; border: 2px solid #f39c12; }
+    .verdict-unknown { background-color: #2a2a2a; color: #bdbdbd; border: 2px solid #757575; }
 
-    .citation-box {
-        background-color: #f8f9fa;
-        padding: 10px 15px;
-        border-left: 4px solid #0d6efd;
-        margin: 5px 0;
-        border-radius: 0 5px 5px 0;
+    /* ── Citation cards ── */
+    .citation-card {
+        background-color: #1e2a3a;
+        border: 1px solid #2d4a6e;
+        border-left: 4px solid #3b82f6;
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin: 8px 0;
     }
-    .step-box {
-        background-color: #f0f0f0;
-        padding: 10px;
-        border-radius: 5px;
-        margin: 5px 0;
-        font-family: monospace;
+    .citation-number {
+        display: inline-block;
+        background-color: #3b82f6;
+        color: white;
+        font-weight: bold;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        margin-bottom: 8px;
+        letter-spacing: 0.5px;
+    }
+    .citation-source {
+        color: #e2e8f0;
+        font-weight: 600;
+        font-size: 15px;
+        margin: 6px 0 4px 0;
+    }
+    .citation-url a {
+        color: #60a5fa;
         font-size: 13px;
+        word-break: break-all;
+        text-decoration: none;
+    }
+    .citation-url a:hover { text-decoration: underline; }
+    .citation-snippet {
+        color: #94a3b8;
+        font-size: 13px;
+        margin-top: 8px;
+        font-style: italic;
+        border-top: 1px solid #2d4a6e;
+        padding-top: 8px;
+        line-height: 1.5;
+    }
+
+    /* ── Agent thinking step cards ── */
+    .step-card {
+        background-color: #1a1f2e;
+        border: 1px solid #2d3748;
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin: 10px 0;
+    }
+    .step-header {
+        color: #a78bfa;
+        font-weight: 700;
+        font-size: 14px;
+        margin-bottom: 10px;
+        letter-spacing: 0.5px;
+    }
+    .step-label {
+        color: #6b7280;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-top: 10px;
+        margin-bottom: 4px;
+    }
+    .step-query {
+        color: #fbbf24;
+        font-size: 13px;
+        font-family: monospace;
+        background-color: #2d2d2d;
+        padding: 5px 10px;
+        border-radius: 4px;
+    }
+    .step-result {
+        color: #d1d5db;
+        font-size: 12px;
+        line-height: 1.6;
+        font-family: monospace;
+        background-color: #111827;
+        padding: 10px 12px;
+        border-radius: 4px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 160px;
+        overflow-y: auto;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -76,7 +142,6 @@ st.markdown("""
 with st.sidebar:
     st.title("⚙️ System Info")
 
-    # Knowledge Base Stats
     st.subheader("📚 Knowledge Base")
     kb_stats = get_kb_stats()
 
@@ -87,7 +152,6 @@ with st.sidebar:
 
     st.divider()
 
-    # How it works
     st.subheader("🧠 How It Works")
     st.markdown("""
     1. **Submit** a claim
@@ -119,7 +183,7 @@ st.title("🔍 AI Claim Verifier")
 st.markdown("*Fact-check any claim using AI-powered RAG with real-time web search*")
 st.divider()
 
-# ── Example Claims ───────────────────────────────────────────────────────────
+# ── Example Claims ────────────────────────────────────────────────────────────
 
 st.subheader("💡 Try an example claim:")
 
@@ -145,7 +209,6 @@ st.divider()
 
 st.subheader("✍️ Or enter your own claim:")
 
-# Pre-fill with selected example if button was clicked
 default_text = selected_example if selected_example else ""
 
 claim_input = st.text_area(
@@ -165,7 +228,7 @@ verify_button = st.button(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VERIFICATION LOGIC
+# VERIFICATION RESULT
 # ─────────────────────────────────────────────────────────────────────────────
 
 if verify_button and claim_input.strip():
@@ -175,13 +238,11 @@ if verify_button and claim_input.strip():
 
     st.divider()
 
-    # ── Verdict Display ───────────────────────────────────────────────────────
-
-    verdict = result.get("verdict", "NOT ENOUGH EVIDENCE")
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    verdict    = result.get("verdict", "NOT ENOUGH EVIDENCE")
     confidence = result.get("confidence", "LOW")
-    display = get_verdict_display(verdict)
+    display    = get_verdict_display(verdict)
 
-    # Map verdict to CSS class
     css_map = {
         "TRUE": "verdict-true",
         "FALSE": "verdict-false",
@@ -196,78 +257,94 @@ if verify_button and claim_input.strip():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Claim Submitted ───────────────────────────────────────────────────────
     st.markdown(f"**📌 Claim:** *{result.get('claim', claim_input)}*")
-
     st.divider()
 
     # ── Reasoning ─────────────────────────────────────────────────────────────
     st.subheader("📝 Reasoning")
-    reasoning = result.get("reasoning", "No reasoning provided.")
-    st.markdown(reasoning if reasoning else "*No reasoning available.*")
-
+    st.markdown(result.get("reasoning", "*No reasoning available.*"))
     st.divider()
 
     # ── Citations ─────────────────────────────────────────────────────────────
     citations = result.get("citations", [])
-
     st.subheader(f"📚 Citations ({len(citations)} sources)")
 
     if citations:
         for i, citation in enumerate(citations, 1):
-            source = citation.get("source", "Unknown")
-            url = citation.get("url", "")
+            source  = citation.get("source", "Unknown Source")
+            url     = citation.get("url", "")
             snippet = citation.get("snippet", "")
 
-            citation_html = f"""
-            <div class="citation-box">
-                <strong>[{i}] {source}</strong><br>
-                {"<a href='" + url + "' target='_blank'>🔗 " + url + "</a><br>" if url else ""}
-                {"<small>" + snippet + "</small>" if snippet else ""}
+            url_html     = f'<div class="citation-url"><a href="{url}" target="_blank">🔗 {url}</a></div>' if url else ""
+            snippet_html = f'<div class="citation-snippet">"{snippet}"</div>' if snippet else ""
+
+            st.markdown(f"""
+            <div class="citation-card">
+                <span class="citation-number">SOURCE {i}</span>
+                <div class="citation-source">📰 {source}</div>
+                {url_html}
+                {snippet_html}
             </div>
-            """
-            st.markdown(citation_html, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
     else:
-        st.info("🔍 No specific citations found. The verdict is based on the AI's analysis of available evidence.")
+        st.info("🔍 No specific citations found. Verdict is based on AI analysis of available evidence.")
 
     st.divider()
 
-    # ── Evidence Quality Badge ────────────────────────────────────────────────
+    # ── Evidence Quality ──────────────────────────────────────────────────────
     eq = result.get("evidence_quality", "NONE")
-    eq_colors = {"STRONG": "🟢", "WEAK": "🟡", "NONE": "🔴"}
-    st.markdown(f"**Evidence Quality:** {eq_colors.get(eq, '⚪')} {eq}")
+    eq_emoji = {"STRONG": "🟢", "WEAK": "🟡", "NONE": "🔴"}.get(eq, "⚪")
+    st.markdown(f"**Evidence Quality:** {eq_emoji} **{eq}**")
+    st.divider()
 
-    # ── Agent Thinking Steps (Expandable) ─────────────────────────────────────
+    # ── Agent Thinking Steps ──────────────────────────────────────────────────
     agent_steps = result.get("agent_steps", [])
 
     if agent_steps:
         with st.expander(f"🧠 Show Agent Thinking ({len(agent_steps)} steps)", expanded=False):
-            st.markdown("*Here's how the agent researched this claim:*")
+            st.markdown("*Here's exactly how the agent researched this claim step by step:*")
 
             for i, step in enumerate(agent_steps, 1):
-                tool = step.get("tool_used", "unknown")
-                query = step.get("query", "")
-                preview = step.get("result_preview", "")
+                tool    = step.get("tool_used", "unknown")
+                query   = step.get("query", "")
+                preview = step.get("result_preview", "No result preview available.")
 
                 tool_emoji = "📚" if "knowledge" in tool else "🌐"
+                tool_label = "Knowledge Base Search" if "knowledge" in tool else "Live Web Search"
 
                 st.markdown(f"""
-                <div class="step-box">
-                    <strong>Step {i}: {tool_emoji} {tool}</strong><br>
-                    🔎 Query: <em>{query}</em><br>
-                    📄 Result preview: {preview}
+                <div class="step-card">
+                    <div class="step-header">{tool_emoji} Step {i} — {tool_label}</div>
+                    <div class="step-label">🔎 Search Query</div>
+                    <div class="step-query">{query}</div>
+                    <div class="step-label">📄 What Was Found</div>
+                    <div class="step-result">{preview}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ── Share / Copy Result ───────────────────────────────────────────────────
+    # ── Download ──────────────────────────────────────────────────────────────
     st.divider()
 
-    summary_text = f"""
-CLAIM: {result.get('claim', '')}
-VERDICT: {verdict}
+    citation_lines = "\n".join([
+        f"[{i+1}] {c.get('source', 'Unknown')} — {c.get('url', 'No URL')}"
+        for i, c in enumerate(citations)
+    ])
+
+    summary_text = f"""CLAIM VERIFICATION RESULT
+{'='*50}
+CLAIM:      {result.get('claim', '')}
+VERDICT:    {verdict}
 CONFIDENCE: {confidence}
-REASONING: {result.get('reasoning', '')}
-    """.strip()
+EVIDENCE:   {eq}
+
+REASONING:
+{result.get('reasoning', '')}
+
+CITATIONS:
+{citation_lines if citation_lines else 'No citations found'}
+{'='*50}
+Built with AI Claim Verifier | GPT-4o + LangChain + ChromaDB
+""".strip()
 
     st.download_button(
         label="📥 Download Result",

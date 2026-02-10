@@ -76,6 +76,23 @@ TRUSTED_SOURCES = [
         "category": "news",
         "name": "BBC News"
     },
+
+    # Sports — Cricket rankings (ICC official)
+    {
+        "url": "https://www.icc-cricket.com/rankings/mens/player-rankings/odi/batting",
+        "category": "sports",
+        "name": "ICC ODI Batting Rankings"
+    },
+    {
+        "url": "https://www.icc-cricket.com/rankings/mens/player-rankings/test/batting",
+        "category": "sports",
+        "name": "ICC Test Batting Rankings"
+    },
+    {
+        "url": "https://www.icc-cricket.com/rankings/mens/player-rankings/t20i/batting",
+        "category": "sports",
+        "name": "ICC T20I Batting Rankings"
+    },
 ]
 
 
@@ -130,6 +147,11 @@ STATIC_FACTS = [
         "content": "Scientific consensus from WHO, CDC, and multiple peer-reviewed studies confirms that COVID-19 vaccines do not cause infertility. The vaccines have been deemed safe and effective.",
         "source": "WHO / CDC",
         "url": "https://www.who.int/news-room/feature-stories/detail/coronavirus-disease-(covid-19)-vaccines"
+    },
+    {
+        "content": "ICC cricket rankings are updated after every match series. The ICC ODI, Test and T20I rankings change frequently. As of early 2025, Babar Azam of Pakistan previously held the top ODI batting ranking but rankings fluctuate. Always check the official ICC website at icc-cricket.com for the most current rankings.",
+        "source": "ICC Cricket",
+        "url": "https://www.icc-cricket.com/rankings/mens/player-rankings/odi/batting"
     },
     {
         "content": "Climate change and global warming are caused primarily by human activities, particularly the burning of fossil fuels. This is the consensus of over 97% of climate scientists.",

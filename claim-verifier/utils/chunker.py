@@ -18,7 +18,7 @@ Strategy: RecursiveCharacterTextSplitter
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
-def get_text_splitter(chunk_size: int = 500, chunk_overlap: int = 50):
+def get_text_splitter(chunk_size: int = 300, chunk_overlap: int = 40):
     """
     Returns a text splitter configured for news articles.
 
@@ -41,7 +41,7 @@ def get_text_splitter(chunk_size: int = 500, chunk_overlap: int = 50):
     )
 
 
-def split_documents(documents, chunk_size: int = 500, chunk_overlap: int = 50):
+def split_documents(documents, chunk_size: int = 300, chunk_overlap: int = 40):
     """
     Convenience function: splits a list of documents into chunks.
 
