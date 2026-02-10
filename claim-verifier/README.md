@@ -146,9 +146,3 @@ claim-verifier/
 - [x] Always cites sources
 - [x] Never fabricates sources
 - [x] Returns "Not Enough Evidence" when appropriate
-
----
-
-## ⚠️ Disclaimer
-This tool is AI-powered and may make mistakes.  
-Always verify critical claims with primary sources.
