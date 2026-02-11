@@ -8,6 +8,7 @@ Run with:
 """
 
 import streamlit as st
+from urllib.parse import unquote_plus
 from rag_engine.agent import verify_claim
 from rag_engine.knowledge_base import get_kb_stats
 from utils.output_parser import get_verdict_display
@@ -183,6 +184,15 @@ st.title("🔍 AI Claim Verifier")
 st.markdown("*Fact-check any claim using AI-powered RAG with real-time web search*")
 st.divider()
 
+# ── Session state: keep claim text across runs (fixes reset on Verify click) ──
+if "claim_text" not in st.session_state:
+    st.session_state.claim_text = ""
+
+# ── URL query param: pre-fill claim when opened from extension or shared link ──
+url_claim = st.query_params.get("claim")
+if url_claim is not None:
+    st.session_state.claim_text = unquote_plus(url_claim)
+
 # ── Example Claims ────────────────────────────────────────────────────────────
 
 st.subheader("💡 Try an example claim:")
@@ -203,27 +213,33 @@ for i, example in enumerate(example_claims):
     if col.button(f"📌 {example[:45]}...", key=f"ex_{i}"):
         selected_example = example
 
+# When user picks an example, store it so the text area shows it
+if selected_example is not None:
+    st.session_state.claim_text = selected_example
+
 st.divider()
 
 # ── Claim Input ───────────────────────────────────────────────────────────────
 
 st.subheader("✍️ Or enter your own claim:")
 
-default_text = selected_example if selected_example else ""
-
+# Use session state so claim is NOT cleared when Verify is clicked (same run re-renders with value="")
 claim_input = st.text_area(
     label="Enter the claim to verify",
-    value=default_text,
+    value=st.session_state.claim_text,
     placeholder="e.g. The Earth is flat and NASA is hiding the truth...",
     height=100,
-    label_visibility="collapsed"
+    label_visibility="collapsed",
+    key="claim_input",
 )
+# Keep session state in sync with what user typed
+st.session_state.claim_text = claim_input
 
 verify_button = st.button(
     "🔍 Verify Claim",
     type="primary",
     use_container_width=True,
-    disabled=not claim_input.strip()
+    disabled=not claim_input.strip(),
 )
 
 
@@ -232,9 +248,11 @@ verify_button = st.button(
 # ─────────────────────────────────────────────────────────────────────────────
 
 if verify_button and claim_input.strip():
+    claim_to_verify = claim_input.strip()
+    print(f"[App] Verify clicked — claim: {claim_to_verify[:80]}...")
 
     with st.spinner("🤖 Agent is researching the claim... This may take 15-30 seconds"):
-        result = verify_claim(claim_input.strip())
+        result = verify_claim(claim_to_verify)
 
     st.divider()
 

@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "AI Claim Verifier",
+  "description": "Verify claims from any webpage. Select text or paste a claim to open the AI Claim Verifier app.",
+  "version": "1.0.0",
+  "permissions": ["activeTab", "contextMenus", "storage", "scripting"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Verify claim with AI Claim Verifier"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
