@@ -193,35 +193,9 @@ url_claim = st.query_params.get("claim")
 if url_claim is not None:
     st.session_state.claim_text = unquote_plus(url_claim)
 
-# ── Example Claims ────────────────────────────────────────────────────────────
-
-st.subheader("💡 Try an example claim:")
-
-example_claims = [
-    "India banned TikTok permanently in 2020",
-    "Neil Armstrong walked on the Moon in 1969",
-    "COVID-19 vaccines cause infertility",
-    "India became the most populous country in 2023",
-    "Arvind Kejriwal was arrested in 2024",
-]
-
-cols = st.columns(2)
-selected_example = None
-
-for i, example in enumerate(example_claims):
-    col = cols[i % 2]
-    if col.button(f"📌 {example[:45]}...", key=f"ex_{i}"):
-        selected_example = example
-
-# When user picks an example, store it so the text area shows it
-if selected_example is not None:
-    st.session_state.claim_text = selected_example
-
-st.divider()
-
 # ── Claim Input ───────────────────────────────────────────────────────────────
 
-st.subheader("✍️ Or enter your own claim:")
+st.subheader("✍️ Enter your claim:")
 
 # Use session state so claim is NOT cleared when Verify is clicked (same run re-renders with value="")
 claim_input = st.text_area(
