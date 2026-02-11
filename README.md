@@ -7,21 +7,141 @@ A Real-Time News Claim Verification System powered by **GPT-4o**, **LangChain**,
 
 ## 🏗️ Architecture
 
+### Verification flow (runtime)
+
+```mermaid
+flowchart TB
+    subgraph Input["Entry points"]
+        A[Streamlit Web App]
+        B[Browser Extension]
+    end
+
+    subgraph Core["Claim verification pipeline"]
+        C[Claim text]
+        D[LangChain ReAct Agent]
+        E[Evidence + credibility context]
+        F[GPT-4o]
+        G[Output parser]
+    end
+
+    subgraph Tools["Agent tools"]
+        T1[search_knowledge_base]
+        T2[search_web]
+    end
+
+    subgraph KB["Knowledge base path"]
+        K1[Query]
+        K2[ChromaDB similarity_search]
+        K3[Reranker FlashRank]
+        K4[Top-k chunks]
+    end
+
+    subgraph Web["Live web path"]
+        W1[Query]
+        W2[Tavily API]
+        W3[Search results]
+    end
+
+    subgraph Output["Structured result"]
+        O1[Verdict]
+        O2[Reasoning]
+        O3[Citations]
+        O4[Agent steps]
+    end
+
+    A --> C
+    B --> C
+    C --> D
+    D --> T1
+    D --> T2
+    T1 --> K1
+    K1 --> K2
+    K2 --> K3
+    K3 --> K4
+    K4 --> E
+    T2 --> W1
+    W1 --> W2
+    W2 --> W3
+    W3 --> E
+    E --> F
+    F --> G
+    G --> O1
+    G --> O2
+    G --> O3
+    G --> O4
+    O1 --> A
+    O2 --> A
+    O3 --> A
+    O4 --> A
 ```
-User submits a claim
-        ↓
-LangChain ReAct Agent
-        ↓
-   ┌────┴────┐
-   ↓         ↓
-ChromaDB   Tavily
-(Stored    (Live Web
- Facts)     Search)
-   └────┬────┘
-        ↓
-   GPT-4o generates verdict
-        ↓
-Verdict + Reasoning + Citations
+
+### RAG components detail
+
+```mermaid
+flowchart LR
+    subgraph Build["Knowledge base (build time)"]
+        direction TB
+        S1[Trusted sources]
+        S2[Static facts]
+        S3[RecursiveCharacterTextSplitter]
+        S4[text-embedding-3-small]
+        S5[ChromaDB]
+        S1 --> S3
+        S2 --> S3
+        S3 --> S4
+        S4 --> S5
+    end
+
+    subgraph Retrieve["Retrieve (query time)"]
+        direction TB
+        R1[Claim / query]
+        R2[ChromaDB fetch 3×k]
+        R3[Rerank ms-marco]
+        R4[Top-k docs]
+        R1 --> R2
+        R2 --> R3
+        R3 --> R4
+    end
+
+    subgraph Verify["Verify"]
+        direction TB
+        V1[Evidence + source credibility]
+        V2[GPT-4o]
+        V3[Verdict + citations]
+        V1 --> V2
+        V2 --> V3
+    end
+
+    Build -.-> Retrieve
+    Retrieve --> Verify
+```
+
+### Agentic loop (ReAct)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as ReAct Agent
+    participant KB as search_knowledge_base
+    participant Web as search_web
+    participant LLM as GPT-4o
+
+    U->>A: Claim to verify
+    loop Until enough evidence or max iterations
+        A->>LLM: Thought + available tools
+        LLM->>A: Action (tool + query)
+        alt Tool: search_knowledge_base
+            A->>KB: query
+            KB->>A: Formatted KB results
+        else Tool: search_web
+            A->>Web: query
+            Web->>A: Tavily results
+        end
+        A->>LLM: Observation
+    end
+    A->>LLM: Evidence summary + claim + credibility
+    LLM->>A: VERDICT, REASONING, CITATIONS
+    A->>U: Structured result
 ```
 
 ---
@@ -93,6 +213,16 @@ streamlit run app.py
 ```
 
 Open your browser at: **http://localhost:8501**
+
+### 7. Deploy (optional)
+
+To run the app on a public URL (for the browser extension or sharing):
+
+- **Streamlit Community Cloud** — Connect your GitHub repo, set root to `claim-verifier`, add secrets, deploy. Free.
+- **Docker** — From `claim-verifier/`: `docker build -t claim-verifier .` then `docker run -p 8501:8501 -e OPENAI_API_KEY=... -e TAVILY_API_KEY=... claim-verifier`. Persist the KB with `-v claim-verifier-data:/app/data`.
+- **Railway / Render / Fly.io** — Deploy the Dockerfile; set env vars and use the generated URL in the extension.
+
+See **[claim-verifier/DEPLOYMENT.md](claim-verifier/DEPLOYMENT.md)** for step-by-step instructions.
 
 ---
 
