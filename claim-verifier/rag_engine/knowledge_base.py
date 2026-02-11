@@ -95,6 +95,23 @@ def get_retriever(k: int = 3):
     return vectorstore.as_retriever(search_kwargs={"k": k})
 
 
+def url_exists_in_kb(url: str) -> bool:
+    """
+    Check if any document in the KB already has this URL in metadata.
+    Used to avoid adding duplicate web-harvested results.
+    """
+    if not url or not url.strip():
+        return False
+    try:
+        client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        collection = client.get_collection(COLLECTION_NAME)
+        # Chroma where: exact match on metadata key "url"
+        got = collection.get(where={"url": url.strip()}, limit=1)
+        return got and len(got.get("ids", [])) > 0
+    except Exception:
+        return False
+
+
 def get_kb_stats() -> dict:
     try:
         client = chromadb.PersistentClient(path=CHROMA_DB_PATH)

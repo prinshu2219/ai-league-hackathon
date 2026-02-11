@@ -11,10 +11,13 @@ from langchain.agents import AgentExecutor, create_react_agent
 from langchain import hub
 from dotenv import load_dotenv
 
+from langchain.schema import Document
 from rag_engine.tools import get_agent_tools
 from rag_engine.prompts import VERIFICATION_PROMPT, AGENT_SYSTEM_PROMPT
+from rag_engine.knowledge_base import add_documents_to_kb, url_exists_in_kb
 from utils.output_parser import parse_verdict_response
 from utils.source_credibility import build_credibility_context
+from utils.web_result_parser import parse_web_observation
 
 load_dotenv()
 
@@ -156,11 +159,84 @@ def verify_claim(claim: str) -> dict:
     result = parse_verdict_response(raw_verdict, claim)
     result["agent_steps"] = _format_agent_steps(intermediate_steps)
 
+    # ── Step 5: Optional harvest — add web results to KB ──────────────
+    _maybe_harvest_web_results_to_kb(
+        intermediate_steps=intermediate_steps,
+        verdict=result.get("verdict", ""),
+    )
+
     print(f"\n{'='*60}")
     print(f"VERDICT: {result['verdict']}")
     print(f"{'='*60}\n")
 
     return result
+
+
+def _maybe_harvest_web_results_to_kb(
+    intermediate_steps: list,
+    verdict: str,
+) -> None:
+    """
+    If enabled via env, parse web search observations from agent steps,
+    filter and deduplicate, then add selected results to the knowledge base.
+    """
+    enabled = os.getenv("ENABLE_KB_UPDATE_FROM_WEB", "").strip().lower() in ("1", "true", "yes")
+    if not enabled:
+        return
+
+    only_when_verdict_ok = os.getenv("KB_UPDATE_ONLY_WHEN_VERDICT_NOT_UNKNOWN", "true").strip().lower() in ("1", "true", "yes")
+    if only_when_verdict_ok and verdict == "NOT ENOUGH EVIDENCE":
+        return
+
+    try:
+        max_docs = int(os.getenv("KB_UPDATE_MAX_DOCS_PER_RUN", "3"))
+    except ValueError:
+        max_docs = 3
+
+    # Collect observations from search_web steps only
+    all_parsed = []
+    for step in intermediate_steps:
+        if len(step) < 2:
+            continue
+        action, observation = step[0], step[1]
+        tool_name = getattr(action, "tool", "")
+        if tool_name != "search_web":
+            continue
+        parsed = parse_web_observation(str(observation))
+        all_parsed.extend(parsed)
+
+    # Dedup by URL (in-KB and in-run), cap at max_docs
+    seen_urls = set()
+    documents = []
+    for item in all_parsed:
+        url = (item.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        if url_exists_in_kb(url):
+            seen_urls.add(url)
+            continue
+        seen_urls.add(url)
+        title = item.get("title") or "Unknown"
+        content = item.get("content") or ""
+        page_content = f"{title}\n\n{content}".strip() or title
+        doc = Document(
+            page_content=page_content,
+            metadata={
+                "source": title,
+                "url": url,
+                "category": "web_harvest",
+            },
+        )
+        documents.append(doc)
+        if len(documents) >= max_docs:
+            break
+
+    if not documents:
+        return
+    try:
+        add_documents_to_kb(documents)
+    except Exception as e:
+        print(f"KB harvest error (verification result still returned): {e}")
 
 
 def _format_agent_steps(intermediate_steps: list) -> list:

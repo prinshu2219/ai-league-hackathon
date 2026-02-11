@@ -76,6 +76,8 @@ Get your keys:
 - **OpenAI**: https://platform.openai.com/api-keys
 - **Tavily**: https://tavily.com (free tier)
 
+**Optional — grow KB from web results:** After each verification, you can add some of the web search results into the knowledge base so it grows over time. In `.env` set `ENABLE_KB_UPDATE_FROM_WEB=true`. You can also set `KB_UPDATE_MAX_DOCS_PER_RUN=3` (max documents added per run) and `KB_UPDATE_ONLY_WHEN_VERDICT_NOT_UNKNOWN=true` (only add when the verdict is not "NOT ENOUGH EVIDENCE"). Duplicate URLs are skipped.
+
 ### 5. Build the Knowledge Base (Run Once)
 ```bash
 # Full build (scrapes web + loads static facts)
