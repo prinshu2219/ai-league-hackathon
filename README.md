@@ -2,6 +2,7 @@
 ### AI League Hackathon #1 — RAG / Agentic RAG
 
 A Real-Time News Claim Verification System powered by **GPT-4o**, **LangChain**, and **ChromaDB**.
+### [Architecture Diagram](https://app.eraser.io/workspace/OJaioGMLlpSmIvTyHJ5I)
 
 ---
 
@@ -16,8 +17,6 @@ A Real-Time News Claim Verification System powered by **GPT-4o**, **LangChain**,
 | Web Search | Tavily API |
 | Framework | LangChain |
 
----
-## [Architecture Diagram](https://app.eraser.io/workspace/OJaioGMLlpSmIvTyHJ5I)
 ---
 
 ## 🚀 Setup Instructions
