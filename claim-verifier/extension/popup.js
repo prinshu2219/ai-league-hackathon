@@ -1,4 +1,4 @@
-const DEFAULT_BASE_URL = 'http://localhost:8501';
+const DEFAULT_BASE_URL = 'http://65.0.149.214:8501';
 
 const claimInput = document.getElementById('claimInput');
 const verifyBtn = document.getElementById('verifyBtn');

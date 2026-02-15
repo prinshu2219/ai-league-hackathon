@@ -1,4 +1,4 @@
-const DEFAULT_BASE_URL = 'http://localhost:8501';
+const DEFAULT_BASE_URL = 'http://65.0.149.214:8501';
 
 const baseUrlInput = document.getElementById('baseUrl');
 const saveBtn = document.getElementById('saveBtn');
