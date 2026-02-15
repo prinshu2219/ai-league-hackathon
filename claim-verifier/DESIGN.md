@@ -1,6 +1,7 @@
 # Claim Verifier — Design Document
 
 This document describes the architecture, RAG flow, and technical choices behind the Real-Time News Claim Verification system.
+### [Architecture Diagram](https://app.eraser.io/workspace/OJaioGMLlpSmIvTyHJ5I)
 
 ---
 
