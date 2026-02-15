@@ -218,5 +218,3 @@ flowchart LR
 | **Knowledge base** | Static facts + scraped trusted sources (fact-check, Wikipedia, news, ICC); optional growth from web results |
 | **Live web** | Tavily API via agent tool; multiple queries for current affairs; date-aware and conflict handling in prompt |
 | **Verification logic** | ReAct agent (KB + web) → evidence + credibility → single GPT-4o verification call → structured parser → verdict + reasoning + citations |
-
-This design document and the Mermaid diagrams above describe the RAG flow and components of the Claim Verifier system in an easy-to-understand way.
