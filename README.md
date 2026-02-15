@@ -17,6 +17,8 @@ A Real-Time News Claim Verification System powered by **GPT-4o**, **LangChain**,
 | Framework | LangChain |
 
 ---
+## [Architecture Diagram](https://app.eraser.io/workspace/OJaioGMLlpSmIvTyHJ5I)
+---
 
 ## 🚀 Setup Instructions
 
