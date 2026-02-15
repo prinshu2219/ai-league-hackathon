@@ -116,26 +116,6 @@ flowchart LR
     Retrieve --> Verify
 ```
 
-### 1.3 Data flow (simplified)
-
-```mermaid
-flowchart LR
-    User[User] --> Entry[Entry points]
-    Entry --> Claim[Claim text]
-    Claim --> Agent[ReAct Agent]
-    Agent --> Tools[Agent tools]
-    Tools --> Chroma[(ChromaDB)]
-    Tools --> Tavily[Tavily API]
-    Chroma --> Evidence[Evidence]
-    Tavily --> Evidence
-    Evidence --> Cred[Source credibility]
-    Cred --> Prompt[Verification prompt]
-    Prompt --> GPT[GPT-4o]
-    GPT --> Parse[Output parser]
-    Parse --> Output[Verdict + Reasoning + Citations]
-    Output --> User
-```
-
 ---
 
 ## 2. Technical explanation
