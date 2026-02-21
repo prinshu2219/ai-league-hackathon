@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  travel-agent:
+    build: .
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./app:/app/app   # Hot reload during development
+    restart: unless-stopped

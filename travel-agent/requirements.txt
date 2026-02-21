@@ -1,0 +1,36 @@
+# ── Core AI Framework ─────────────────────────────────────
+langgraph==0.2.55
+langchain==0.3.13
+langchain-openai==0.2.13
+langchain-core==0.3.28
+openai==1.58.1
+
+# ── Travel APIs ───────────────────────────────────────────
+amadeus==9.0.0
+tavily-python==0.5.0
+praw==7.8.1                    # Reddit API
+
+# ── Web & HTTP ────────────────────────────────────────────
+requests==2.32.3
+httpx==0.28.1
+
+# ── Frontend ──────────────────────────────────────────────
+streamlit==1.41.1
+streamlit-folium==0.23.1       # Map in Streamlit
+
+# ── Map & Visualization ───────────────────────────────────
+folium==0.18.0
+geopy==2.4.1                   # Geocoding
+
+# ── PDF Generation ────────────────────────────────────────
+reportlab==4.2.5
+Pillow==11.0.0                 # Images in PDF
+
+# ── Data & Utilities ──────────────────────────────────────
+python-dotenv==1.0.1
+pydantic==2.10.3
+python-dateutil==2.9.0
+pytz==2024.2
+
+# ── Caching ───────────────────────────────────────────────
+cachetools==5.5.0
