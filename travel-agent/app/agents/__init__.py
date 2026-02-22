@@ -488,10 +488,12 @@ def checkpoint_2_node(state: dict) -> dict:
 def checkpoint_3_node(state: dict) -> dict:
     print("\n⏸  [Checkpoint 3] Waiting for booking confirmation...")
     human_response = interrupt({
-        "type":       "booking_confirmation",
-        "cart":       state.get("booking_cart", []),
-        "cart_total": state.get("cart_total", 0),
-        "budget":     state.get("budget", 0),
+        "type":              "booking_confirmation",
+        "cart":              state.get("booking_cart", []),
+        "cart_total":        state.get("cart_total", 0),
+        "full_trip_estimate": state.get("full_trip_estimate",
+                                state.get("projected_total", 0)),
+        "budget":            state.get("budget", 0),
     })
     confirmed = human_response.get("confirmed", False)
     print(f"   ✅ Bookings {'confirmed' if confirmed else 'rejected'}")
@@ -524,32 +526,69 @@ def budget_architect_agent(state: dict) -> dict:
     chosen   = state.get("chosen_option_details", {})
     rough    = chosen.get("rough_breakdown", {})
 
-    if rough and all(k in rough for k in ["travel","stay","food","activities","local_transport","buffer"]):
+    NOTES = {
+        "travel": "Return transport", "stay": f"{duration-1} nights",
+        "food": "Food & drinks", "activities": "Experiences",
+        "local_transport": "Local travel", "buffer": "Emergency",
+    }
+    CATS = ["travel", "stay", "food", "activities", "local_transport", "buffer"]
+
+    if rough and all(k in rough for k in CATS):
         breakdown = {
             cat: {
-                "allocated": val,
-                "per_day": val // max(duration, 1) if cat not in ["travel","buffer"] else 0,
-                "actual": 0,
-                "notes": {"travel":"Return transport","stay":f"{duration-1} nights",
-                           "food":"Food & drinks","activities":"Experiences",
-                           "local_transport":"Local travel","buffer":"Emergency"}.get(cat,""),
+                "allocated": int(rough[cat]),
+                "per_day":   int(rough[cat]) // max(duration, 1) if cat not in ["travel","buffer"] else 0,
+                "actual":    0,
+                "notes":     NOTES.get(cat, ""),
             }
-            for cat, val in rough.items()
-            if cat in ["travel","stay","food","activities","local_transport","buffer"]
+            for cat in CATS
         }
+        raw_projected = sum(v["allocated"] for v in breakdown.values())
+
+        # ── KEY FIX: normalize so breakdown sums exactly to chosen option's
+        # estimated_total. GPT-4o generates rough_breakdown values independently
+        # and they rarely sum to the advertised total. ──────────────────────
+        chosen_total = int(chosen.get("estimated_total", 0))
+        if chosen_total > 0 and raw_projected != chosen_total:
+            scale = chosen_total / raw_projected
+            for cat in CATS:
+                breakdown[cat]["allocated"] = int(breakdown[cat]["allocated"] * scale)
+            # Fix rounding residual on the largest category
+            residual = chosen_total - sum(v["allocated"] for v in breakdown.values())
+            if residual != 0:
+                largest = max(CATS, key=lambda c: breakdown[c]["allocated"])
+                breakdown[largest]["allocated"] += residual
+            # Recompute per_day with normalized values
+            for cat in CATS:
+                if cat not in ["travel", "buffer"]:
+                    breakdown[cat]["per_day"] = breakdown[cat]["allocated"] // max(duration, 1)
+
         projected = sum(v["allocated"] for v in breakdown.values())
         feasible  = projected <= budget
-        warnings  = [f"⚠️ Projected Rs {projected:,} over budget Rs {budget:,}"] if not feasible else []
-        print(f"   ✅ Budget: Rs {projected:,}")
+        warnings  = [f"⚠️ Projected Rs {projected:,} slightly over budget Rs {budget:,}"]                     if not feasible else []
+        print(f"   ✅ Budget: Rs {projected:,} (option estimate: Rs {chosen_total:,})")
         return {"budget_breakdown": breakdown, "projected_total": projected,
                 "budget_feasible": feasible, "budget_warnings": warnings}
 
-    # Percentage fallback
-    allocs = {"travel":0.08,"stay":0.25,"food":0.17,"activities":0.27,"local_transport":0.06,"buffer":0.07}
-    breakdown = {cat: {"allocated": int(budget*pct),
-                       "per_day": int(budget*pct//duration),
-                       "actual": 0, "notes": cat.replace("_"," ").title()}
-                 for cat, pct in allocs.items()}
+    # ── Percentage fallback (no rough_breakdown from GPT-4o) ──────────────
+    # Use 90% of total budget as a reasonable estimate
+    target = int(budget * 0.88)
+    allocs = {"travel": 0.09, "stay": 0.28, "food": 0.19,
+              "activities": 0.28, "local_transport": 0.07, "buffer": 0.09}
+    breakdown = {
+        cat: {
+            "allocated": int(target * pct),
+            "per_day":   int(target * pct // duration) if cat not in ["travel","buffer"] else 0,
+            "actual":    0,
+            "notes":     NOTES.get(cat, cat.replace("_"," ").title()),
+        }
+        for cat, pct in allocs.items()
+    }
+    # Normalize to target
+    raw = sum(v["allocated"] for v in breakdown.values())
+    residual = target - raw
+    if residual:
+        breakdown["activities"]["allocated"] += residual
     projected = sum(v["allocated"] for v in breakdown.values())
     return {"budget_breakdown": breakdown, "projected_total": projected,
             "budget_feasible": True, "budget_warnings": []}
@@ -619,10 +658,20 @@ def booking_cart_agent(state: dict) -> dict:
             "confirmation_required": act["price"] > 0,
         })
     cart_total = sum(i["cost"] for i in cart)
-    print(f"   ✅ Cart: Rs {cart_total:,} ({len(cart)} items)")
-    return {"booking_cart":cart,"cart_total":cart_total,
-            "selected_transport":transport,"selected_accommodation":accommodation,
-            "selected_activities":selected_acts,"current_phase":"cart_ready"}
+    # full_trip_estimate = the approved projected_total from Step 2
+    # This is what the WHOLE TRIP costs (including food, local transport, buffer)
+    # cart_total is only the bookable subset
+    full_trip_estimate = state.get("projected_total", 0)
+    print(f"   ✅ Cart (bookable): Rs {cart_total:,} | Full trip: Rs {full_trip_estimate:,}")
+    return {
+        "booking_cart":          cart,
+        "cart_total":            cart_total,
+        "full_trip_estimate":    full_trip_estimate,
+        "selected_transport":    transport,
+        "selected_accommodation": accommodation,
+        "selected_activities":   selected_acts,
+        "current_phase":         "cart_ready",
+    }
 
 
 # ─────────────────────────────────────────────────────────
@@ -774,16 +823,75 @@ Build the complete itinerary:"""
             city = day.get("city", destination)
             city_itineraries.setdefault(city, []).append(day["day_number"])
 
-        total_cost = int(result.get("total_estimated_cost",
-                          sum(d["daily_cost_estimate"] for d in itinerary)))
+        # ── USE projected_total FROM STEP 2 AS AUTHORITATIVE COST ──────
+        projected_total = state.get("projected_total", 0)
+        approved        = state.get("budget_breakdown", {})
+        daily_sum_raw   = sum(d["daily_cost_estimate"] for d in itinerary)
+        total_cost      = (projected_total if projected_total > 0
+                           else int(result.get("total_estimated_cost", daily_sum_raw)))
+
+        # ── REDISTRIBUTE DAILY COSTS SO THEY SUM TO total_cost ──────────
+        # Each day's headline cost = prorated share of EVERY budget category.
+        # This means the day‑by‑day numbers and the budget breakdown
+        # always add up to the same figure.
+        if total_cost > 0 and len(itinerary) > 0:
+            # Pull per-category allocations (fall back to zeroes gracefully)
+            a_travel   = approved.get("travel",          {}).get("allocated", transport.get("price",0)*2)
+            a_stay     = approved.get("stay",            {}).get("allocated", hotel.get("price_per_night",0)*(duration-1))
+            a_food     = approved.get("food",            {}).get("allocated", 0)
+            a_acts     = approved.get("activities",      {}).get("allocated", 0)
+            a_local    = approved.get("local_transport", {}).get("allocated", 0)
+            a_buffer   = approved.get("buffer",          {}).get("allocated", 0)
+
+            nights     = max(duration - 1, 1)
+            stay_pn    = a_stay / nights          # stay cost per night
+            food_pd    = a_food / duration         # food per day
+            local_pd   = a_local / duration        # local transport per day
+            buffer_pd  = a_buffer / duration       # buffer per day
+            transport_ow = a_travel / 2            # one-way transport cost
+
+            # Per-day activity cost = sum of actual activity segment costs on that day
+            day_act_costs = {}
+            for d in itinerary:
+                day_act_costs[d["day_number"]] = sum(
+                    s["cost"] for s in d.get("segments", [])
+                    if s["type"] == "activity"
+                )
+            total_act_segments = sum(day_act_costs.values())
+            # If segment costs don't match allocated, scale them
+            act_scale = (a_acts / total_act_segments) if total_act_segments > 0 else 0
+
+            new_daily = {}
+            for d in itinerary:
+                dn = d["day_number"]
+                is_first = (dn == 1)
+                is_last  = (dn == duration)
+                act_cost = day_act_costs[dn] * act_scale if act_scale > 0 else (a_acts / duration)
+                # Transport: split between first and last day
+                travel_today = transport_ow if (is_first or is_last) else 0
+                # Stay: every night except checkout day (last day)
+                stay_today   = stay_pn if not is_last else 0
+                new_daily[dn] = int(travel_today + stay_today + food_pd + act_cost + local_pd + buffer_pd)
+
+            # Normalize: ensure sum == total_cost (fix integer rounding)
+            current_sum = sum(new_daily.values())
+            if current_sum != total_cost:
+                residual = total_cost - current_sum
+                # Add residual to the middle day (most natural)
+                mid_day = itinerary[len(itinerary)//2]["day_number"]
+                new_daily[mid_day] += residual
+
+            # Apply back to itinerary
+            for d in itinerary:
+                d["daily_cost_estimate"] = new_daily[d["day_number"]]
 
         final_budget = {
-            "travel":          transport.get("price",0)*2,
-            "stay":            hotel.get("price_per_night",0)*(duration-1),
-            "food":            sum(s["cost"] for d in itinerary
-                                   for s in d["segments"] if s["type"]=="meal"),
-            "activities":      sum(a["price"] for a in activities),
-            "local_transport": 800,
+            "travel":          approved.get("travel",      {}).get("allocated", transport.get("price",0)*2),
+            "stay":            approved.get("stay",        {}).get("allocated", hotel.get("price_per_night",0)*(duration-1)),
+            "food":            approved.get("food",        {}).get("allocated", 0),
+            "activities":      approved.get("activities",  {}).get("allocated", sum(a["price"] for a in activities)),
+            "local_transport": approved.get("local_transport",{}).get("allocated", 800),
+            "buffer":          approved.get("buffer",      {}).get("allocated", 0),
             "estimated_total": total_cost,
             "remaining":       budget - total_cost,
         }
@@ -872,20 +980,37 @@ def _itinerary_fallback(state: dict) -> dict:
                                    "maps_link":"","booking_link":"","weather_note":""}],
                       "daily_cost_estimate":transport.get("price",0)+200,
                       "highlights":["Safe return"]})
-    total = sum(d["daily_cost_estimate"] for d in itinerary)
+    # Use projected_total from Step 2 as authoritative cost (same fix as main path)
+    projected_total = state.get("projected_total", 0)
+    approved        = state.get("budget_breakdown", {})
+    daily_sum       = sum(d["daily_cost_estimate"] for d in itinerary)
+    total           = projected_total if projected_total > 0 else daily_sum
+
     return {
         "daily_itinerary": itinerary,
-        "final_budget_summary": {"travel":transport.get("price",0)*2,
-            "stay":hotel.get("price_per_night",0)*(duration-1),
-            "food":450*duration,"activities":sum(a["price"] for a in activities),
-            "local_transport":800,"estimated_total":total,"remaining":state["budget"]-total},
-        "trip_summary": {"destination":dest,"duration":f"{duration} Days",
-            "budget":f"Rs {state['budget']:,}","style":travel_style,
-            "travelers":state.get("num_travelers",1),
-            "dates":f"{state['travel_dates']['start']} to {state['travel_dates']['end']}",
-            "estimated_cost":f"Rs {total:,}","savings":f"Rs {state['budget']-total:,} remaining",
-            "is_multi_city":False,"city_stops":state.get("city_stops",[])},
-        "city_itineraries": {dest: list(range(1,duration+1))},
+        "final_budget_summary": {
+            "travel":          approved.get("travel",      {}).get("allocated", transport.get("price",0)*2),
+            "stay":            approved.get("stay",        {}).get("allocated", hotel.get("price_per_night",0)*(duration-1)),
+            "food":            approved.get("food",        {}).get("allocated", 450*duration),
+            "activities":      approved.get("activities",  {}).get("allocated", sum(a["price"] for a in activities)),
+            "local_transport": approved.get("local_transport",{}).get("allocated", 800),
+            "buffer":          approved.get("buffer",      {}).get("allocated", 0),
+            "estimated_total": total,
+            "remaining":       state["budget"] - total,
+        },
+        "trip_summary": {
+            "destination":    dest,
+            "duration":       f"{duration} Days",
+            "budget":         f"Rs {state['budget']:,}",
+            "style":          travel_style,
+            "travelers":      state.get("num_travelers",1),
+            "dates":          f"{state['travel_dates']['start']} to {state['travel_dates']['end']}",
+            "estimated_cost": f"Rs {total:,}",
+            "savings":        f"Rs {state['budget']-total:,} remaining",
+            "is_multi_city":  False,
+            "city_stops":     state.get("city_stops", []),
+        },
+        "city_itineraries": {dest: list(range(1, duration+1))},
         "current_phase": "itinerary_built",
     }
 
@@ -939,14 +1064,25 @@ def merge_output_node(state: dict) -> dict:
 
 def replan_agent(state: dict) -> dict:
     instruction = state.get("replan_instruction","").lower()
-    if any(w in instruction for w in ["budget","cheaper"]):
-        scope = ["budget_architect_node","booking_cart_node","itinerary_architect"]
-    elif any(w in instruction for w in ["hotel","stay"]):
+    if any(w in instruction for w in ["budget","cheaper","cost","cheap","reduce","money"]):
+        # Rebuild budget at lower allocation, then itinerary
+        scope = ["budget_architect_node","activities_finder","itinerary_architect"]
+    elif any(w in instruction for w in ["hotel","stay","hostel","accommodation"]):
+        # Re-scout accommodation, rebuild booking cart + itinerary
         scope = ["accommodation_scout","booking_cart_node","itinerary_architect"]
+    elif any(w in instruction for w in ["adventure","outdoor","sport","trek","raft","bungee"]):
+        # Re-fetch activities with adventure filter, rebuild itinerary
+        scope = ["activities_finder","itinerary_architect"]
+    elif any(w in instruction for w in ["spiritual","yoga","meditation","temple","ashram","calm"]):
+        # Re-fetch activities with spiritual filter, rebuild itinerary
+        scope = ["activities_finder","itinerary_architect"]
     else:
-        scope = ["itinerary_architect","pdf_generator","map_generator"]
-    return {"replan_scope":scope,"replan_count":state.get("replan_count",0)+1,
-            "current_phase":"replanning"}
+        # Default: rebuild activities + itinerary (covers custom instructions too)
+        scope = ["activities_finder","itinerary_architect"]
+    print(f"   🔄 Replan scope: {scope}")
+    return {"replan_scope": scope,
+            "replan_count": state.get("replan_count", 0) + 1,
+            "current_phase": "replanning"}
 
 
 def handle_error_node(state: dict) -> dict:

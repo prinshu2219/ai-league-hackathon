@@ -302,7 +302,31 @@ def render_checkpoint_2(interrupt_data: dict):
     for w in interrupt_data.get("warnings", []):
         st.warning(w)
 
-    st.markdown(f"**Budget:** ₹{budget:,} | **Projected:** ₹{projected:,}")
+    # Clear explanation so user understands what these numbers mean
+    remaining_after_trip = budget - projected
+    colour = "#22C55E" if remaining_after_trip >= 0 else "#EF4444"
+    st.markdown(f"""
+    <div style='background:#111827;border:1px solid #1F2937;border-radius:10px;
+                padding:12px 16px;margin-bottom:1rem;display:flex;gap:2rem'>
+      <div>
+        <div style='color:#6B7280;font-size:11px;font-weight:600'>YOUR BUDGET</div>
+        <div style='font-size:1.3rem;font-weight:700'>₹{budget:,}</div>
+      </div>
+      <div>
+        <div style='color:#6B7280;font-size:11px;font-weight:600'>FULL TRIP ESTIMATE</div>
+        <div style='font-size:1.3rem;font-weight:700'>₹{projected:,}</div>
+      </div>
+      <div>
+        <div style='color:#6B7280;font-size:11px;font-weight:600'>REMAINING</div>
+        <div style='font-size:1.3rem;font-weight:700;color:{colour}'>₹{remaining_after_trip:,}</div>
+      </div>
+    </div>
+    <div style='color:#6B7280;font-size:12px;margin-bottom:1rem'>
+      ✏️ Drag sliders to reallocate spend across categories.
+      The total below updates live — keep it under your budget.
+    </div>
+    """, unsafe_allow_html=True)
+
     st.progress(min(projected / budget, 1.0) if budget else 0)
 
     icons = {
@@ -313,6 +337,8 @@ def render_checkpoint_2(interrupt_data: dict):
     updated = {}
     total   = 0
 
+    # Slider max = budget (so user can shift money between categories freely)
+    # but we show a live "over budget" warning if total exceeds budget
     for cat, data in breakdown.items():
         c1, c2, c3 = st.columns([2, 3, 1])
         with c1:
@@ -323,7 +349,7 @@ def render_checkpoint_2(interrupt_data: dict):
                 f"Budget for {cat}",
                 min_value=0,
                 max_value=budget,
-                value=data.get("allocated", 0),
+                value=min(data.get("allocated", 0), budget),
                 step=100,
                 key=f"sl_{cat}",
                 label_visibility="collapsed",
@@ -334,17 +360,28 @@ def render_checkpoint_2(interrupt_data: dict):
         total += val
 
     st.markdown("---")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Total Budget", f"₹{budget:,}")
-    with c2:
-        st.metric("Allocated", f"₹{total:,}")
-    with c3:
-        st.metric("Remaining", f"₹{budget - total:,}")
+    # Show live totals — this is the number that flows into every future step
+    over = total > budget
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Your Budget", f"₹{budget:,}")
+    with col2:
+        st.metric("Allocated (full trip)", f"₹{total:,}",
+                  delta=f"₹{total - projected:,} vs estimate",
+                  delta_color="inverse")
+    with col3:
+        rem = budget - total
+        st.metric("Remaining", f"₹{rem:,}",
+                  delta="over budget" if over else "within budget",
+                  delta_color="inverse" if over else "normal")
+
+    if over:
+        st.error(f"⚠️ Allocated ₹{total:,} exceeds your budget ₹{budget:,} by ₹{total-budget:,}. Reduce sliders above.")
 
     col_l, col_btn, col_r = st.columns([1, 2, 1])
     with col_btn:
-        if st.button("✅ Approve Budget", type="primary", use_container_width=True):
+        if st.button("✅ Approve Budget", type="primary",
+                     use_container_width=True, disabled=over):
             return {"approved_budget": updated}
     return None
 
@@ -369,17 +406,38 @@ def render_checkpoint_3(interrupt_data: dict):
     st.markdown("---")
     st.markdown("## 🛒 Step 3 — Confirm Bookings")
 
-    cart       = interrupt_data.get("cart", [])
-    cart_total = interrupt_data.get("cart_total", 0)
-    budget     = interrupt_data.get("budget", 0)
+    cart               = interrupt_data.get("cart", [])
+    cart_total         = interrupt_data.get("cart_total", 0)
+    full_trip_estimate = interrupt_data.get("full_trip_estimate", 0)
+    budget             = interrupt_data.get("budget", 0)
 
-    remaining = budget - cart_total
-    colour    = "green" if remaining >= 0 else "red"
-    st.markdown(
-        f"**Cart Total: ₹{cart_total:,}** &nbsp;|&nbsp; "
-        f"<span style='color:{colour}'>Remaining: ₹{remaining:,}</span>",
-        unsafe_allow_html=True,
-    )
+    # Use full_trip_estimate (approved in Step 2) as the real trip cost.
+    # cart_total only covers transport + hotel + activities — it deliberately
+    # excludes food, local transport and buffer (can't pre-book those).
+    display_total   = full_trip_estimate if full_trip_estimate > 0 else cart_total
+    remaining_total = budget - display_total
+    colour_total    = "#22C55E" if remaining_total >= 0 else "#EF4444"
+
+    st.markdown(f"""
+    <div style='background:#111827;border:1px solid #1F2937;border-radius:10px;
+                padding:12px 16px;margin-bottom:.8rem;display:flex;gap:2rem;flex-wrap:wrap'>
+      <div>
+        <div style='color:#6B7280;font-size:11px;font-weight:600'>FULL TRIP COST</div>
+        <div style='font-size:1.3rem;font-weight:700'>₹{display_total:,}</div>
+        <div style='color:#6B7280;font-size:11px'>approved in Step 2</div>
+      </div>
+      <div>
+        <div style='color:#6B7280;font-size:11px;font-weight:600'>TO BOOK NOW</div>
+        <div style='font-size:1.3rem;font-weight:700'>₹{cart_total:,}</div>
+        <div style='color:#6B7280;font-size:11px'>transport + hotel + activities</div>
+      </div>
+      <div>
+        <div style='color:#6B7280;font-size:11px;font-weight:600'>BUDGET REMAINING</div>
+        <div style='font-size:1.3rem;font-weight:700;color:{colour_total}'>₹{remaining_total:,}</div>
+        <div style='color:#6B7280;font-size:11px'>food + local travel in cash</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Source summary badges
     sources = list(dict.fromkeys(
@@ -464,6 +522,14 @@ def render_final_output(state: dict):
                     del st.session_state[k]
                 st.rerun()
         return
+
+    # ── Persistent replan feedback (survives st.rerun) ───
+    feedback = st.session_state.pop("replan_feedback", None)
+    if feedback:
+        if feedback["type"] == "success":
+            st.success(feedback["message"])
+        else:
+            st.error(feedback["message"])
 
     # ── 5A: Upgraded success banner ───────────────────────
     summary    = state.get("trip_summary", {})
@@ -642,38 +708,68 @@ def render_final_output(state: dict):
 
         if clicked_action:
             with st.spinner(f"🔄 GPT-4o is updating your plan..."):
-                from app.agents import replan_agent
-                updated_state = {**state, "replan_instruction": clicked_action,
-                                 "replan_requested": True}
-                updated_state = replan_agent(updated_state)
-                # Re-run the affected parts (activities + budget + itinerary)
                 try:
-                    from app.agents import (activities_finder_agent,
+                    from app.agents import (replan_agent, activities_finder_agent,
                                              budget_architect_agent,
                                              itinerary_architect_agent,
                                              pdf_generator_agent,
                                              map_generator_agent)
-                    if any(k in updated_state.get("replan_scope", [])
-                           for k in ["activities_finder", "itinerary_architect"]):
+
+                    # ── BUG FIX: start from a COPY of the full current state
+                    # then MERGE (update) replan_agent's tiny return dict into it.
+                    # Previously: updated_state = replan_agent(...) wiped ALL state
+                    # because replan_agent returns only 3 keys.
+                    updated_state = {**state,
+                                     "replan_instruction": clicked_action,
+                                     "replan_requested":   True}
+                    replan_result = replan_agent(updated_state)   # returns 3 keys only
+                    updated_state.update(replan_result)           # MERGE, don't replace
+
+                    scope = updated_state.get("replan_scope", [])
+
+                    # Step 1: re-fetch activities if needed
+                    if any(k in scope for k in ["activities_finder", "itinerary_architect",
+                                                 "booking_cart_node"]):
                         acts = activities_finder_agent(updated_state)
                         updated_state.update(acts)
-                    if "budget_architect_node" in updated_state.get("replan_scope", []):
+
+                    # Step 2: rebuild budget if "make it cheaper" etc.
+                    if "budget_architect_node" in scope:
                         bgt = budget_architect_agent(updated_state)
                         updated_state.update(bgt)
-                        # skip checkpoint 2 in replan — auto-approve same budget
-                        updated_state["approved_budget"] = updated_state.get("budget_breakdown", {})
+                        # auto-approve in replan (skip human checkpoint)
+                        updated_state["approved_budget"]  = updated_state.get("budget_breakdown", {})
+                        updated_state["projected_total"]  = updated_state.get("projected_total",
+                                                                state.get("projected_total", 0))
+
+                    # Step 3: always rebuild itinerary
                     itin = itinerary_architect_agent(updated_state)
                     updated_state.update(itin)
-                    pdf  = pdf_generator_agent(updated_state)
+
+                    # Step 4: rebuild PDF and map
+                    pdf = pdf_generator_agent(updated_state)
                     updated_state.update(pdf)
-                    mp   = map_generator_agent(updated_state)
+                    mp  = map_generator_agent(updated_state)
                     updated_state.update(mp)
+
                     updated_state["current_phase"] = "complete"
+
                 except Exception as e:
-                    st.warning(f"Partial replan: {e}")
-            st.session_state["graph_state"]   = updated_state
-            st.session_state["planning_done"] = True
-            st.success(f"✅ Plan updated: {clicked_action[:60]}")
+                    import traceback
+                    tb = traceback.format_exc()
+                    # Store error so it survives st.rerun()
+                    st.session_state["_replan_error"] = f"⚠️ Replan error: {e}"
+                    print(f"Replan exception:\n{tb}")
+                    updated_state = state  # fall back to original plan on error
+
+            st.session_state["graph_state"]    = updated_state
+            st.session_state["planning_done"]  = True
+            # Store feedback in session state so it PERSISTS across st.rerun()
+            st.session_state["replan_feedback"] = {
+                "type":    "error" if updated_state is state else "success",
+                "message": st.session_state.get("_replan_error", f"✅ Plan updated: {clicked_action[:60]}"),
+            }
+            st.session_state.pop("_replan_error", None)
             st.rerun()
 
 
@@ -682,11 +778,14 @@ def _render_days(days: list, colors: list, seg_icons: dict):
     for day in days:
         color    = colors[(day["day_number"] - 1) % len(colors)]
         city_tag = f" · {day['city']}" if day.get("city") else ""
+        day_total = day["daily_cost_estimate"]
         with st.expander(
             f"{color} Day {day['day_number']}{city_tag} — {day['theme']} "
-            f"(~₹{day['daily_cost_estimate']:,})",
+            f"(~₹{day_total:,})",
             expanded=(day["day_number"] == 1),
         ):
+            # ── Segments (what you actually do) ──────────────────────
+            seg_sum = 0
             for seg in day.get("segments", []):
                 icon = seg_icons.get(seg["type"], "📍")
                 c1, c2, c3 = st.columns([1, 4, 1])
@@ -697,10 +796,34 @@ def _render_days(days: list, colors: list, seg_icons: dict):
                     if seg.get("notes"):
                         st.caption(f"💡 {seg['notes']}")
                 with c3:
-                    cost = f"₹{seg['cost']:,}" if seg["cost"] > 0 else "Free"
+                    seg_cost = seg.get("cost", 0)
+                    seg_sum += seg_cost
+                    cost = f"₹{seg_cost:,}" if seg_cost > 0 else "Free"
                     st.markdown(cost)
                     if seg.get("maps_link"):
                         st.link_button("📍 Map", seg["maps_link"])
+
+            # ── Budget allocation breakdown for this day ──────────────
+            # Shows the "hidden" costs (stay, transport proration, buffer)
+            # so the header total is explained and makes sense.
+            overhead = day_total - seg_sum
+            if overhead > 50:  # only show if meaningful
+                st.markdown(
+                    f"<div style='margin-top:10px;padding:8px 12px;"
+                    f"background:#111827;border-radius:8px;border-left:3px solid #374151'>"
+                    f"<span style='color:#6B7280;font-size:11px;font-weight:600'>"
+                    f"DAILY BUDGET ALLOCATION</span><br>"
+                    f"<span style='color:#9CA3AF;font-size:12px'>"
+                    f"Activities & meals shown above: "
+                    f"<b style='color:#D1D5DB'>₹{seg_sum:,}</b>"
+                    f" &nbsp;+&nbsp; "
+                    f"Prorated stay, transport & buffer: "
+                    f"<b style='color:#D1D5DB'>₹{overhead:,}</b>"
+                    f" &nbsp;=&nbsp; "
+                    f"<b style='color:#F9FAFB'>Day total ₹{day_total:,}</b>"
+                    f"</span></div>",
+                    unsafe_allow_html=True,
+                )
 
 
 # ── MAIN ──────────────────────────────────────────────────
