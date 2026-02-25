@@ -23,15 +23,18 @@ FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
 CURRENT_URL  = "https://api.openweathermap.org/data/2.5/weather"
 
 
+def _is_international_dest(destination: str) -> bool:
+    from app.agents import _is_indian_city
+    return not _is_indian_city(destination)
+
+
 def _geocode(city: str, api_key: str) -> tuple[float, float] | None:
     """Convert city name to lat/lng using OWM Geocoding API."""
-    # Append India to improve accuracy for Indian destinations
-    query = f"{city}, India"
+    query = city if _is_international_dest(city) else f"{city}, India"
     resp  = requests.get(GEO_URL, params={"q": query, "limit": 1, "appid": api_key}, timeout=8)
     resp.raise_for_status()
     data = resp.json()
     if not data:
-        # Try without "India"
         resp  = requests.get(GEO_URL, params={"q": city, "limit": 1, "appid": api_key}, timeout=8)
         resp.raise_for_status()
         data = resp.json()

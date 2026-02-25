@@ -104,6 +104,11 @@ def _booking_link(mode: str, origin: str, dest: str,
     return _irctc_link(origin, dest, date)
 
 
+def _is_international_route(origin: str, destination: str) -> bool:
+    from app.agents import _is_indian_city
+    return not (_is_indian_city(origin) and _is_indian_city(destination))
+
+
 def get_transport_options(origin: str, destination: str,
                            travel_date: str, budget: int = 15000,
                            num_travelers: int = 1) -> list[dict]:
@@ -113,10 +118,39 @@ def get_transport_options(origin: str, destination: str,
     """
     print(f"   🤖 [Transport] GPT-4o: {origin} → {destination}...")
 
+    international = _is_international_route(origin, destination)
     has_airports = (origin.lower().strip() in CITY_TO_IATA and
                     destination.lower().strip() in CITY_TO_IATA)
 
-    system = """You are an expert on Indian transport routes.
+    if international:
+        system = f"""You are an expert on international travel from India.
+Generate realistic flight options from {origin} (India) to {destination}.
+
+Return JSON {{"options": [...]}} with exactly 3 objects:
+{{
+  "mode": "flight",
+  "operator": "real airline name",
+  "train_name": "",
+  "train_number": "",
+  "price": integer INR one-way per person (realistic international airfare),
+  "duration_mins": integer (total including layovers),
+  "departure_time": "HH:MM",
+  "arrival_time": "HH:MM",
+  "class": "Economy|Premium Economy|Business",
+  "notes": "one practical sentence (layovers, visa requirements, etc.)"
+}}
+
+Rules:
+- ALL options MUST be flights — trains/buses CANNOT cross international borders
+- Option 1: cheapest economy (budget airline, 1-2 stops)
+- Option 2: mid-range (good airline, fewer stops)
+- Option 3: premium (direct or business class if available)
+- Prices must be realistic for 2025 international flights from India in INR
+- Mention visa requirements in notes if applicable
+- A one-way economy flight from India to the US/Europe costs ₹25,000-60,000
+- A one-way economy flight from India to Southeast Asia costs ₹8,000-20,000"""
+    else:
+        system = """You are an expert on Indian transport routes.
 Generate realistic transport options between two Indian cities.
 
 Return JSON {"options": [...]} with exactly 3 objects:
@@ -135,7 +169,7 @@ Return JSON {"options": [...]} with exactly 3 objects:
 
 Rules:
 - Option 1: cheapest (Sleeper train or non-AC bus)
-- Option 2: mid-range (3AC train or AC Volvo bus)  
+- Option 2: mid-range (3AC train or AC Volvo bus)
 - Option 3: fastest (flight if both have airports, else 2AC/cab)
 - Prices must be realistic for 2025 India
 - Use REAL train names that actually run this route
@@ -185,4 +219,49 @@ Generate 3 options:"""
 
     except Exception as e:
         print(f"   ⚠️ Transport GPT-4o failed ({e}) — using mock")
+        if international:
+            return _international_mock(origin, destination)
         return get_mock_transport_options(origin, destination)
+
+
+def _international_mock(origin: str, destination: str) -> list[dict]:
+    """Fallback flight options for international routes using cost tier data."""
+    from app.agents import _CITY_TO_TIER, _COST_TIERS
+    tier_key = _CITY_TO_TIER.get(destination.lower().strip(), "europe")
+    base_price = _COST_TIERS[tier_key]["flight_rt"] // 2
+
+    return [
+        {
+            "id": "transport_1", "mode": "flight",
+            "operator": "Budget Airline (1-2 stops)",
+            "price": int(base_price * 0.75), "duration_mins": 1200,
+            "departure_time": "23:00", "arrival_time": "14:00",
+            "class": "Economy",
+            "booking_link": _mmt_flight_link(origin, destination,
+                                              "2025-03-01", 1),
+            "notes": f"Budget airline with layover. Check visa requirements for {destination}.",
+            "source": "Fallback",
+        },
+        {
+            "id": "transport_2", "mode": "flight",
+            "operator": "Major Airline (1-stop)",
+            "price": base_price, "duration_mins": 960,
+            "departure_time": "01:00", "arrival_time": "12:00",
+            "class": "Economy",
+            "booking_link": _mmt_flight_link(origin, destination,
+                                              "2025-03-01", 1),
+            "notes": f"Reputable carrier, shorter layover. Check visa for {destination}.",
+            "source": "Fallback",
+        },
+        {
+            "id": "transport_3", "mode": "flight",
+            "operator": "Premium Airline (direct/1-stop)",
+            "price": int(base_price * 1.5), "duration_mins": 840,
+            "departure_time": "21:00", "arrival_time": "06:00",
+            "class": "Economy",
+            "booking_link": _mmt_flight_link(origin, destination,
+                                              "2025-03-01", 1),
+            "notes": f"Best routing with shortest travel time. Visa required for {destination}.",
+            "source": "Fallback",
+        },
+    ]

@@ -125,12 +125,14 @@ def get_destination_info(destination: str) -> dict:
     try:
         print(f"   [Research] Tavily searching for {destination}...")
 
-        # Run 3 targeted searches
+        from app.agents import _is_indian_city
+        suffix = " India" if _is_indian_city(destination) else ""
+
         results = []
         queries = [
-            f"{destination} India travel guide best things to do attractions 2024",
-            f"{destination} India travel tips reddit hidden gems local advice",
-            f"best restaurants local food {destination} India budget travel",
+            f"{destination}{suffix} travel guide best things to do attractions 2024",
+            f"{destination}{suffix} travel tips reddit hidden gems local advice",
+            f"best restaurants local food {destination}{suffix} budget travel",
         ]
         for q in queries:
             try:

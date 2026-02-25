@@ -62,10 +62,16 @@ def _openai() -> OpenAI:
     return _openai_client
 
 
+def _is_international_dest(destination: str) -> bool:
+    from app.agents import _is_indian_city
+    return not _is_indian_city(destination)
+
+
 def _geocode_city(city: str) -> tuple[float, float] | None:
     """Get lat/lng for a city using Google Geocoding API."""
+    address = city if _is_international_dest(city) else f"{city}, India"
     resp = requests.get(GEOCODE_URL, params={
-        "address": f"{city}, India",
+        "address": address,
         "key":     config.GOOGLE_PLACES_API_KEY,
     }, timeout=8)
     resp.raise_for_status()
@@ -252,8 +258,8 @@ def get_activities(destination: str, interests: list[str],
         if "food" in interests:
             search_queries.append(f"best local restaurants street food {destination}")
 
-        # Always add a general tourist attractions search
-        search_queries.append(f"top tourist attractions sightseeing {destination} India")
+        suffix = "" if _is_international_dest(destination) else " India"
+        search_queries.append(f"top tourist attractions sightseeing {destination}{suffix}")
 
         # Deduplicate and limit to 3 searches (cost control)
         search_queries = list(dict.fromkeys(search_queries))[:3]

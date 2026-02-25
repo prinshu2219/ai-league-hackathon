@@ -31,6 +31,225 @@ client = OpenAI(api_key=config.OPENAI_API_KEY)
 
 
 # ─────────────────────────────────────────────────────────
+# FEASIBILITY VALIDATION
+# ─────────────────────────────────────────────────────────
+
+_INDIAN_CITIES = {
+    "delhi", "new delhi", "mumbai", "bombay", "bangalore", "bengaluru",
+    "chennai", "madras", "kolkata", "calcutta", "hyderabad", "pune",
+    "ahmedabad", "jaipur", "lucknow", "kanpur", "nagpur", "indore",
+    "bhopal", "visakhapatnam", "vizag", "patna", "vadodara", "goa",
+    "panaji", "rishikesh", "haridwar", "dehradun", "chandigarh",
+    "amritsar", "varanasi", "banaras", "agra", "udaipur", "jodhpur",
+    "shimla", "manali", "kullu", "darjeeling", "gangtok", "srinagar",
+    "leh", "ladakh", "kochi", "ernakulam", "thiruvananthapuram",
+    "trivandrum", "mysore", "mysuru", "coorg", "ooty", "kodaikanal",
+    "pondicherry", "puducherry", "guwahati", "shillong", "bhubaneswar",
+    "ranchi", "raipur", "coimbatore", "madurai", "allahabad", "prayagraj",
+    "nainital", "mussoorie", "mount abu", "pushkar", "jaisalmer",
+    "bikaner", "mcleodganj", "dharamshala", "kasol", "bir billing",
+    "munnar", "hampi", "varkala", "alleppey", "alappuzha", "kovalam",
+    "gokarna", "mahabalipuram", "tirupati", "shirdi", "ajmer",
+    "mathura", "vrindavan", "khajuraho", "orchha", "aurangabad",
+    "lonavala", "mahabaleshwar", "alibaug", "andaman", "port blair",
+    "meghalaya", "tawang", "jammu", "kutch", "rann of kutch",
+    "siliguri", "digha", "puri", "konark", "dwarka", "somnath",
+}
+
+
+def _is_indian_city(city: str) -> bool:
+    return city.lower().strip() in _INDIAN_CITIES
+
+
+# Per-destination cost tiers: round-trip flight (INR/person) + daily cost (INR/person/day)
+_COST_TIERS = {
+    "budget_asia": {"flight_rt": 20000, "daily": 6000},
+    "mid_asia":    {"flight_rt": 35000, "daily": 10000},
+    "middle_east": {"flight_rt": 28000, "daily": 12000},
+    "europe":      {"flight_rt": 50000, "daily": 22000},
+    "americas":    {"flight_rt": 70000, "daily": 30000},
+    "oceania":     {"flight_rt": 60000, "daily": 22000},
+    "africa":      {"flight_rt": 45000, "daily": 8000},
+}
+
+_CITY_TO_TIER: dict[str, str] = {}
+_TIER_MAP_RAW = {
+    "budget_asia": [
+        "bangkok", "phuket", "chiang mai", "pattaya", "krabi",
+        "bali", "jakarta", "kuala lumpur", "langkawi", "penang",
+        "ho chi minh", "hanoi", "da nang", "siem reap", "phnom penh",
+        "kathmandu", "pokhara", "colombo", "kandy", "galle",
+        "yangon", "vientiane", "luang prabang", "manila", "cebu",
+    ],
+    "mid_asia": [
+        "singapore", "hong kong", "tokyo", "osaka", "kyoto",
+        "seoul", "busan", "taipei", "beijing", "shanghai",
+        "guangzhou", "shenzhen", "macau",
+    ],
+    "middle_east": [
+        "dubai", "abu dhabi", "doha", "istanbul", "muscat",
+        "riyadh", "jeddah", "bahrain", "amman", "beirut", "tehran",
+    ],
+    "europe": [
+        "london", "paris", "rome", "milan", "venice", "florence",
+        "barcelona", "madrid", "amsterdam", "berlin", "munich",
+        "prague", "vienna", "zurich", "geneva", "lisbon", "athens",
+        "budapest", "edinburgh", "dublin", "brussels", "copenhagen",
+        "stockholm", "oslo", "helsinki", "warsaw", "krakow",
+        "nice", "lyon", "porto", "seville", "santorini",
+    ],
+    "americas": [
+        "new york", "los angeles", "san francisco", "chicago",
+        "las vegas", "miami", "boston", "washington dc", "seattle",
+        "houston", "denver", "orlando", "toronto", "vancouver",
+        "montreal", "mexico city", "cancun", "lima", "bogota",
+        "buenos aires", "sao paulo", "rio de janeiro", "santiago",
+    ],
+    "oceania": [
+        "sydney", "melbourne", "brisbane", "perth", "auckland",
+        "queenstown", "fiji",
+    ],
+    "africa": [
+        "cape town", "johannesburg", "nairobi", "cairo", "marrakech",
+        "casablanca", "dar es salaam", "zanzibar", "accra", "lagos",
+    ],
+}
+for _tier, _cities in _TIER_MAP_RAW.items():
+    for _c in _cities:
+        _CITY_TO_TIER[_c] = _tier
+
+
+def _estimate_min_budget(destination: str, duration: int,
+                         num_travelers: int) -> tuple[int, str]:
+    """
+    Estimate the realistic minimum budget for an international trip.
+    Returns (min_budget_inr, breakdown_explanation).
+    """
+    dest_lower = destination.lower().strip()
+    tier_key = _CITY_TO_TIER.get(dest_lower, "europe")
+    tier = _COST_TIERS[tier_key]
+
+    flight = tier["flight_rt"] * num_travelers
+    daily_total = tier["daily"] * duration * num_travelers
+    minimum = flight + daily_total
+
+    explain = (
+        f"flights ~₹{flight:,} + "
+        f"₹{tier['daily']:,}/person/day × {duration} days"
+    )
+    if num_travelers > 1:
+        explain += f" × {num_travelers} travelers"
+
+    return minimum, explain
+
+
+def _validate_trip_feasibility(
+    origin: str, destination: str, budget: int, duration: int,
+    num_travelers: int, city_stops: list, assumptions: list,
+) -> tuple[int, int, list, list]:
+    """
+    Catch unrealistic trip parameters and adjust to feasible minimums.
+    Returns (budget, duration, city_stops, new_warnings).
+    """
+    warnings = []
+    origin_indian = _is_indian_city(origin)
+    dest_indian = _is_indian_city(destination)
+    is_international = not (origin_indian and dest_indian)
+
+    if is_international:
+        if duration < 4:
+            old = duration
+            duration = max(5, old)
+            assumptions.append({
+                "field": "duration",
+                "assumed_value": f"{duration} days",
+                "reason": (
+                    f"International flights to {destination} take 10–20+ hours each way. "
+                    f"A {old}-day trip leaves no time at the destination."
+                ),
+                "can_edit": True,
+            })
+            warnings.append(
+                f"⚠️ {old}-day international trip is not feasible. "
+                f"Adjusted to {duration} days."
+            )
+
+        min_budget, cost_explain = _estimate_min_budget(
+            destination, duration, num_travelers,
+        )
+
+        if budget < min_budget:
+            old = budget
+            budget = min_budget
+            assumptions.append({
+                "field": "budget",
+                "assumed_value": f"₹{budget:,}",
+                "reason": (
+                    f"A {duration}-day trip to {destination} realistically costs "
+                    f"at least ₹{min_budget:,} ({cost_explain}). "
+                    f"Original ₹{old:,} was not feasible."
+                ),
+                "can_edit": True,
+            })
+            warnings.append(
+                f"⚠️ Budget ₹{old:,} is unrealistic for a {duration}-day "
+                f"{origin} → {destination} trip. Adjusted to ₹{budget:,}."
+            )
+
+        for stop in city_stops:
+            if stop.get("transport_from_prev") in (
+                "train", "bus", "car", "shared_cab",
+            ):
+                stop["transport_from_prev"] = "flight"
+            if stop.get("transport_time_hrs", 0) < 4:
+                stop["transport_time_hrs"] = 15
+
+    else:
+        min_budget_dom = max(1500, 1000 * num_travelers)
+        if budget < min_budget_dom:
+            old = budget
+            budget = min_budget_dom
+            assumptions.append({
+                "field": "budget",
+                "assumed_value": f"₹{budget:,}",
+                "reason": (
+                    f"₹{old:,} is below the minimum for any trip "
+                    f"(transport + food + stay). Adjusted to ₹{budget:,}."
+                ),
+                "can_edit": True,
+            })
+            warnings.append(
+                f"⚠️ Budget ₹{old:,} is too low. Adjusted to ₹{budget:,}."
+            )
+
+    if duration < 1:
+        duration = 1
+        assumptions.append({
+            "field": "duration",
+            "assumed_value": "1 day",
+            "reason": "Trip must be at least 1 day.",
+            "can_edit": True,
+        })
+
+    # Re-sync city_stops days with adjusted duration
+    if city_stops:
+        usable = max(duration - 1, 1)
+        total_stop_days = sum(s.get("days", 1) for s in city_stops)
+        if total_stop_days != usable:
+            if len(city_stops) == 1:
+                city_stops[0]["days"] = usable
+            else:
+                ratio = usable / max(total_stop_days, 1)
+                leftover = usable
+                for s in city_stops[:-1]:
+                    s["days"] = max(1, round(s["days"] * ratio))
+                    leftover -= s["days"]
+                city_stops[-1]["days"] = max(1, leftover)
+
+    return budget, duration, city_stops, warnings
+
+
+# ─────────────────────────────────────────────────────────
 # HELPER
 # ─────────────────────────────────────────────────────────
 
@@ -111,7 +330,18 @@ RULES:
 - city_stops[0].transport_from_prev is transport FROM origin TO first city
 - days across all city_stops must sum to duration_days (minus 1 for return day)
 - Be specific — mention real travel times and real highlights per city
-- Always return valid JSON"""
+- Always return valid JSON
+
+FEASIBILITY RULES (critical):
+- International trips (origin and destination in different countries):
+  * transport_from_prev MUST be "flight" — trains/buses/cars CANNOT cross oceans
+  * Minimum realistic budget: ₹50,000 per person (flights alone cost ₹25,000+)
+  * Minimum realistic duration: 5 days (flights take 10-20+ hours each way)
+  * If user gives an impossibly low budget or duration, set a realistic minimum
+    and add an assumption explaining why
+- Domestic India trips: minimum budget ₹1,500 per person
+- If budget is impossibly low for ANY trip, set a realistic floor and explain in assumptions
+- Do NOT hallucinate cheap options for expensive routes — be honest about costs"""
 
     user_prompt = f"""Today: {today.strftime('%B %d, %Y')} ({today.strftime('%A')}).
 Default next weekend: {next_fri.strftime('%b %d')} to {next_sun.strftime('%b %d, %Y')}.
@@ -158,6 +388,13 @@ Extract travel intent (detect multi-city carefully):"""
                 "can_edit": True,
             })
 
+        # Hard-coded feasibility check (safety net for GPT hallucinations)
+        budget, duration, city_stops, feasibility_warnings = \
+            _validate_trip_feasibility(
+                origin, destination, budget, duration,
+                num_travelers, city_stops, assumptions,
+            )
+
         start_date = next_fri
         end_date   = start_date + timedelta(days=duration - 1)
 
@@ -195,6 +432,7 @@ Extract travel intent (detect multi-city carefully):"""
             "is_multi_city":     is_multi,
             "city_stops":        city_stops,
             "city_itineraries":  city_itineraries,
+            "warnings":          feasibility_warnings,
             "current_phase":     "intent_parsed",
         }
 
@@ -246,14 +484,17 @@ def destination_research_agent(state: dict) -> dict:
 def transport_scout_agent(state: dict) -> dict:
     print(f"🚌 [Transport] {state['origin']} → {state['destination']}...")
     from app.tools.transport import get_transport_options
+    num_travelers = state.get("num_travelers", 1)
     options = get_transport_options(
         origin        = state["origin"],
         destination   = state["destination"],
         travel_date   = state["travel_dates"].get("start", "2025-03-01"),
         budget        = state.get("budget", 15000),
-        num_travelers = state.get("num_travelers", 1),
+        num_travelers = num_travelers,
     )
-    affordable = [o for o in options if o["price"] * 2 <= state["budget"] * 0.20]
+    is_intl = not (_is_indian_city(state["origin"]) and _is_indian_city(state["destination"]))
+    transport_share = 0.40 if is_intl else 0.20
+    affordable = [o for o in options if o["price"] * 2 * num_travelers <= state["budget"] * transport_share]
     rec_id = affordable[0]["id"] if affordable else (options[0]["id"] if options else "")
     return {"transport_options": options, "recommended_transport_id": rec_id}
 
@@ -273,6 +514,8 @@ def accommodation_scout_agent(state: dict) -> dict:
     print(f"🏨 [Accommodation] {state['destination']}...")
     from app.tools.hotels import get_accommodation_options
     from datetime import datetime, timedelta
+    num_travelers = state.get("num_travelers", 1)
+    rooms_needed  = max(1, (num_travelers + 1) // 2)
     start_str  = state["travel_dates"].get("start", "2025-03-01")
     duration   = state.get("duration_days", 4)
     check_in   = start_str
@@ -285,10 +528,13 @@ def accommodation_scout_agent(state: dict) -> dict:
         check_out     = check_out,
         duration_days = duration,
         budget        = state.get("budget", 15000),
-        num_travelers = state.get("num_travelers", 1),
+        num_travelers = num_travelers,
     )
-    budget_per_night = (state["budget"] * 0.25) / max(duration, 1)
-    affordable = [o for o in options if o["price_per_night"] <= budget_per_night * 1.2]
+    is_intl = not (_is_indian_city(state["origin"]) and _is_indian_city(state["destination"]))
+    stay_share = 0.35 if is_intl else 0.25
+    budget_per_night_total = (state["budget"] * stay_share) / max(duration - 1, 1)
+    budget_per_night_per_room = budget_per_night_total / rooms_needed
+    affordable = [o for o in options if o["price_per_night"] <= budget_per_night_per_room * 1.3]
     rec_id = affordable[0]["id"] if affordable else (options[0]["id"] if options else "")
     return {"accommodation_options": options, "recommended_accommodation_id": rec_id}
 
@@ -314,6 +560,45 @@ def trip_options_builder_agent(state: dict) -> dict:
     interests    = state["interests"]
     travel_style = state["travel_style"]
     weather_sum  = state.get("weather_forecast", {}).get("summary", "")
+
+    # Build real cost context from the parallel research phase so GPT-4o
+    # creates options with numbers that match what transport/hotel agents found.
+    num_travelers  = state.get("num_travelers", 1)
+    transport_opts = state.get("transport_options", [])
+    accom_opts     = state.get("accommodation_options", [])
+    cheapest_transport = min((t["price"] for t in transport_opts), default=0)
+    cheapest_hotel_ppn = min((h["price_per_night"] for h in accom_opts), default=0)
+    nights       = max(duration - 1, 1)
+    rooms_needed = max(1, (num_travelers + 1) // 2)
+
+    cost_context = ""
+    if cheapest_transport > 0 or cheapest_hotel_ppn > 0:
+        cost_context = f"\nREAL COST DATA from research (for {num_travelers} traveler(s)):\n"
+        if cheapest_transport > 0:
+            rt_total = cheapest_transport * 2 * num_travelers
+            cost_context += (
+                f"- Cheapest return transport: ₹{cheapest_transport * 2:,}/person, "
+                f"₹{rt_total:,} total for {num_travelers} pax\n"
+                f"- Transport options (per person one-way): "
+                + ", ".join(f"{t['mode']} ₹{t['price']:,}" for t in transport_opts[:3])
+                + "\n"
+            )
+        if cheapest_hotel_ppn > 0:
+            stay_total = cheapest_hotel_ppn * nights * rooms_needed
+            cost_context += (
+                f"- Cheapest stay: ₹{cheapest_hotel_ppn:,}/night/room, "
+                f"{rooms_needed} room(s) needed, "
+                f"₹{stay_total:,} total for {nights} nights\n"
+                f"- Stay options: "
+                + ", ".join(f"{h['name']} ₹{h['price_per_night']:,}/night"
+                            for h in accom_opts[:3])
+                + "\n"
+            )
+        cost_context += (
+            "- rough_breakdown 'travel' MUST be the total transport cost for ALL travelers\n"
+            "- rough_breakdown 'stay' MUST be the total accommodation cost (rooms × nights)\n"
+            "- Do NOT invent cheaper prices than what's available above\n"
+        )
 
     if is_multi:
         route_str  = " → ".join(s["city"] for s in city_stops)
@@ -362,20 +647,25 @@ Return JSON with EXACTLY this structure:
 }
 
 Rules:
-- estimated_total must be under the total budget
+- estimated_total must be realistic — use the REAL COST DATA provided
 - rough_breakdown values must sum to estimated_total
+- The "travel" field = round-trip transport per person (from real data)
+- The "stay" field = hotel price_per_night × number of nights (from real data)
+- estimated_total should be close to the budget but NEVER artificially low
+- If real costs exceed the budget, estimated_total can equal or slightly exceed it
+  with a note in trade_offs about the budget being tight
 - Be specific to the actual places — mention real things to do
 - Options A/B/C should feel genuinely different (pace, depth, spend pattern)"""
 
     user_prompt = f"""{route_context}
-
+{cost_context}
 Budget: Rs {budget:,} total
 Duration: {duration} days
 Style: {travel_style}
 Interests: {', '.join(interests)}
 Weather: {weather_sum}
 
-Create 3 genuinely different options:"""
+Create 3 genuinely different options (use the real cost data above for realistic breakdowns):"""
 
     try:
         result  = gpt4o(system_prompt, user_prompt, temperature=0.7)
@@ -397,14 +687,30 @@ Create 3 genuinely different options:"""
 
 def _options_fallback(state: dict) -> dict:
     budget = state["budget"]
+    num_travelers = state.get("num_travelers", 1)
+
+    transport_opts = state.get("transport_options", [])
+    accom_opts     = state.get("accommodation_options", [])
+    duration       = state.get("duration_days", 4)
+    nights         = max(duration - 1, 1)
+    rooms_needed   = max(1, (num_travelers + 1) // 2)
+
+    cheapest_rt = min((t["price"] for t in transport_opts), default=0) * 2 * num_travelers
+    cheapest_ppn = min((h["price_per_night"] for h in accom_opts), default=0)
+    base_travel = cheapest_rt if cheapest_rt > 0 else int(budget * 0.08)
+    base_stay = cheapest_ppn * nights * rooms_needed if cheapest_ppn > 0 else int(budget * 0.25)
+    base_fixed = base_travel + base_stay
+
+    remaining = max(budget - base_fixed, int(budget * 0.20))
+
     options = {
         "A": {
             "style_name": "Balanced Explorer", "style_tag": "Best of everything",
             "highlights": ["Sightseeing", "Local food", "Key attractions", "Cultural experience"],
-            "estimated_total": int(budget * 0.85),
-            "rough_breakdown": {"travel": int(budget*0.08), "stay": int(budget*0.25),
-                                 "food": int(budget*0.17), "activities": int(budget*0.23),
-                                 "local_transport": int(budget*0.05), "buffer": int(budget*0.07)},
+            "estimated_total": base_fixed + remaining,
+            "rough_breakdown": {"travel": base_travel, "stay": base_stay,
+                                 "food": int(remaining*0.35), "activities": int(remaining*0.35),
+                                 "local_transport": int(remaining*0.15), "buffer": int(remaining*0.15)},
             "why_this_works": "Perfect mix within budget.",
             "trade_offs": "Not the deepest dive into any one thing.",
             "activities_included": state.get("interests", []),
@@ -412,10 +718,10 @@ def _options_fallback(state: dict) -> dict:
         "B": {
             "style_name": "Budget Maximizer", "style_tag": "More for less",
             "highlights": ["Free attractions", "Local transport", "Street food", "Self-guided"],
-            "estimated_total": int(budget * 0.65),
-            "rough_breakdown": {"travel": int(budget*0.08), "stay": int(budget*0.18),
-                                 "food": int(budget*0.12), "activities": int(budget*0.15),
-                                 "local_transport": int(budget*0.05), "buffer": int(budget*0.07)},
+            "estimated_total": base_fixed + int(remaining * 0.7),
+            "rough_breakdown": {"travel": base_travel, "stay": base_stay,
+                                 "food": int(remaining*0.25), "activities": int(remaining*0.20),
+                                 "local_transport": int(remaining*0.10), "buffer": int(remaining*0.15)},
             "why_this_works": "Maximizes time with minimal spend.",
             "trade_offs": "Some premium experiences skipped.",
             "activities_included": ["culture", "food"],
@@ -423,10 +729,10 @@ def _options_fallback(state: dict) -> dict:
         "C": {
             "style_name": "Experience First", "style_tag": "Splurge on what matters",
             "highlights": ["Premium activity", "Better stay", "Guided tours", "Special dinner"],
-            "estimated_total": int(budget * 0.95),
-            "rough_breakdown": {"travel": int(budget*0.08), "stay": int(budget*0.30),
-                                 "food": int(budget*0.18), "activities": int(budget*0.28),
-                                 "local_transport": int(budget*0.04), "buffer": int(budget*0.07)},
+            "estimated_total": base_fixed + int(remaining * 1.2),
+            "rough_breakdown": {"travel": base_travel, "stay": int(base_stay * 1.3),
+                                 "food": int(remaining*0.30), "activities": int(remaining*0.45),
+                                 "local_transport": int(remaining*0.10), "buffer": int(remaining*0.05)},
             "why_this_works": "Invest in quality experiences.",
             "trade_offs": "Tight buffer.",
             "activities_included": state.get("interests", []),
@@ -479,11 +785,24 @@ def checkpoint_2_node(state: dict) -> dict:
     })
     approved = human_response.get("approved_budget", state.get("budget_breakdown", {}))
     modified = approved != state.get("budget_breakdown", {})
-    print(f"   ✅ Budget {'modified' if modified else 'approved'}")
-    return {
+
+    approved_total = sum(
+        v.get("allocated", 0) if isinstance(v, dict) else 0
+        for v in approved.values()
+    )
+    current_budget = state.get("budget", 0)
+    new_budget = max(current_budget, approved_total)
+
+    print(f"   ✅ Budget {'modified' if modified else 'approved'}"
+          f" | approved total: Rs {approved_total:,} | budget: Rs {new_budget:,}")
+    result = {
         "approved_budget": approved, "budget_modified": modified,
         "awaiting_human": False, "current_phase": "budget_approved",
+        "projected_total": approved_total,
     }
+    if new_budget > current_budget:
+        result["budget"] = new_budget
+    return result
 
 
 def checkpoint_3_node(state: dict) -> dict:
@@ -550,7 +869,7 @@ def budget_architect_agent(state: dict) -> dict:
         # estimated_total. GPT-4o generates rough_breakdown values independently
         # and they rarely sum to the advertised total. ──────────────────────
         chosen_total = int(chosen.get("estimated_total", 0))
-        if chosen_total > 0 and raw_projected != chosen_total:
+        if chosen_total > 0 and raw_projected > 0 and raw_projected != chosen_total:
             scale = chosen_total / raw_projected
             for cat in CATS:
                 breakdown[cat]["allocated"] = int(breakdown[cat]["allocated"] * scale)
@@ -607,6 +926,7 @@ def merge_deep_search_node(state: dict) -> dict:
 def booking_cart_agent(state: dict) -> dict:
     print(f"🛒 [Booking Cart] Assembling...")
     time.sleep(0.2)
+    num_travelers = state.get("num_travelers", 1)
     transport_options = state.get("transport_options", [])
     rec_id    = state.get("recommended_transport_id", "")
     transport = next((t for t in transport_options if t["id"] == rec_id),
@@ -616,19 +936,30 @@ def booking_cart_agent(state: dict) -> dict:
     accommodation = next((a for a in accommodation_options if a["id"] == rec_acc),
                          accommodation_options[0] if accommodation_options else {})
     activity_budget = state.get("approved_budget",{}).get("activities",{}).get("allocated",4000)
+    all_acts = state.get("activities", [])
+
+    # Always include free/cheap activities (high value, no cost) then fill with paid
+    free_acts = [a for a in all_acts if a["price"] == 0]
+    paid_acts = sorted([a for a in all_acts if a["price"] > 0], key=lambda x: x["price"])
+
     selected_acts, running = [], 0
-    for act in sorted(state.get("activities",[]), key=lambda x: -x["price"]):
-        if running + act["price"] <= activity_budget:
-            selected_acts.append(act); running += act["price"]
-        if len(selected_acts) >= 4: break
+    for act in free_acts:
+        if len(selected_acts) < 6:
+            selected_acts.append(act)
+    for act in paid_acts:
+        if running + act["price"] <= activity_budget and len(selected_acts) < 6:
+            selected_acts.append(act)
+            running += act["price"]
 
     cart = []
     if transport:
+        price_pp = transport.get("price", 0)
+        transport_total = price_pp * 2 * num_travelers
         cart.append({
             "category":             "transport",
             "name":                 f"{transport.get('mode','').title()} — {transport.get('operator','')}",
-            "details":              f"{state['origin']} → {state['destination']}",
-            "cost":                 transport.get("price", 0) * 2,
+            "details":              f"{state['origin']} → {state['destination']} (round-trip × {num_travelers} pax)",
+            "cost":                 transport_total,
             "booking_link":         transport.get("booking_link", ""),
             "notes":                transport.get("notes", ""),
             "source":               transport.get("source", ""),
@@ -636,12 +967,15 @@ def booking_cart_agent(state: dict) -> dict:
         })
     if accommodation:
         nights = max(state["duration_days"] - 1, 1)
+        ppn = accommodation.get("price_per_night", 0)
+        rooms_needed = max(1, (num_travelers + 1) // 2)
+        stay_total = ppn * nights * rooms_needed
+        room_note = f" × {rooms_needed} rooms" if rooms_needed > 1 else ""
         cart.append({
             "category":             "stay",
             "name":                 accommodation.get("name", ""),
-            "details":              f"Rs {accommodation.get('price_per_night',0):,}/night × {nights} nights",
-            "cost":                 accommodation.get("total_price",
-                                        accommodation.get("price_per_night", 0) * nights),
+            "details":              f"Rs {ppn:,}/night × {nights} nights{room_note}",
+            "cost":                 stay_total,
             "booking_link":         accommodation.get("booking_link", ""),
             "notes":                accommodation.get("why_recommended", ""),
             "source":               accommodation.get("source", ""),
@@ -768,7 +1102,10 @@ Rules:
 - Each day must have "city" field
 - For transit days between cities: include a transport segment at the START
 - Times must be realistic
-- Meals included naturally throughout"""
+- Meals included naturally throughout
+- Transport segment cost = the EXACT total cost from trip details (price × travelers, not per-person)
+- Hotel check-in cost = EXACT total per-night cost from trip details (price × rooms needed)
+- daily_cost_estimate should be realistic for the destination"""
 
     user_prompt = f"""{route_context}
 
@@ -777,8 +1114,8 @@ Trip details:
 - Duration: {duration} days
 - Style: {travel_style}, Interests: {', '.join(interests)}
 - Travelers: {num_travelers}, Food: {food_pref}
-- First leg transport: {transport.get('mode','train')} ({transport.get('operator','')}, Rs {transport.get('price',550)})
-- Primary accommodation: {hotel.get('name','hostel')} (Rs {hotel.get('price_per_night',900)}/night)
+- First leg transport: {transport.get('mode','train')} ({transport.get('operator','')}, Rs {transport.get('price',550)} one-way/person, Rs {transport.get('price',550) * 2 * num_travelers:,} round-trip total for {num_travelers} pax)
+- Primary accommodation: {hotel.get('name','hostel')} (Rs {hotel.get('price_per_night',900):,}/night/room, {max(1, (num_travelers + 1) // 2)} room(s) needed, Rs {hotel.get('price_per_night',900) * max(1, (num_travelers + 1) // 2):,}/night total)
 
 Pre-booked activities to distribute across days:
 {act_list}
@@ -837,8 +1174,8 @@ Build the complete itinerary:"""
         # always add up to the same figure.
         if total_cost > 0 and len(itinerary) > 0:
             # Pull per-category allocations (fall back to zeroes gracefully)
-            a_travel   = approved.get("travel",          {}).get("allocated", transport.get("price",0)*2)
-            a_stay     = approved.get("stay",            {}).get("allocated", hotel.get("price_per_night",0)*(duration-1))
+            a_travel   = approved.get("travel",          {}).get("allocated", transport.get("price",0)*2*num_travelers)
+            a_stay     = approved.get("stay",            {}).get("allocated", hotel.get("price_per_night",0)*(duration-1)*max(1,(num_travelers+1)//2))
             a_food     = approved.get("food",            {}).get("allocated", 0)
             a_acts     = approved.get("activities",      {}).get("allocated", 0)
             a_local    = approved.get("local_transport", {}).get("allocated", 0)
@@ -887,14 +1224,14 @@ Build the complete itinerary:"""
                 d["daily_cost_estimate"] = new_daily[d["day_number"]]
 
         final_budget = {
-            "travel":          approved.get("travel",      {}).get("allocated", transport.get("price",0)*2),
-            "stay":            approved.get("stay",        {}).get("allocated", hotel.get("price_per_night",0)*(duration-1)),
+            "travel":          approved.get("travel",      {}).get("allocated", transport.get("price",0)*2*num_travelers),
+            "stay":            approved.get("stay",        {}).get("allocated", hotel.get("price_per_night",0)*(duration-1)*max(1,(num_travelers+1)//2)),
             "food":            approved.get("food",        {}).get("allocated", 0),
             "activities":      approved.get("activities",  {}).get("allocated", sum(a["price"] for a in activities)),
             "local_transport": approved.get("local_transport",{}).get("allocated", 800),
             "buffer":          approved.get("buffer",      {}).get("allocated", 0),
             "estimated_total": total_cost,
-            "remaining":       budget - total_cost,
+            "remaining":       max(budget - total_cost, 0),
         }
 
         # Build route label for summary
@@ -911,7 +1248,7 @@ Build the complete itinerary:"""
             "travelers":      num_travelers,
             "dates":          f"{state['travel_dates']['start']} to {state['travel_dates']['end']}",
             "estimated_cost": f"Rs {total_cost:,}",
-            "savings":        f"Rs {budget-total_cost:,} remaining",
+            "savings":        f"Rs {max(budget-total_cost, 0):,} remaining",
             "local_tips":     result.get("local_tips",[]),
             "is_multi_city":  is_multi,
             "city_stops":     city_stops,
@@ -933,13 +1270,20 @@ Build the complete itinerary:"""
 
 def _itinerary_fallback(state: dict) -> dict:
     """Template fallback — single-city only."""
-    start        = datetime.strptime(state["travel_dates"]["start"], "%Y-%m-%d")
-    transport    = state.get("selected_transport",{})
-    hotel        = state.get("selected_accommodation",{})
-    activities   = state.get("selected_activities",[])
-    duration     = state["duration_days"]
-    dest         = state["destination"]
-    travel_style = state.get("travel_style", "backpacking")
+    start         = datetime.strptime(state["travel_dates"]["start"], "%Y-%m-%d")
+    transport     = state.get("selected_transport",{})
+    hotel         = state.get("selected_accommodation",{})
+    activities    = state.get("selected_activities",[])
+    duration      = state["duration_days"]
+    dest          = state["destination"]
+    travel_style  = state.get("travel_style", "backpacking")
+    num_travelers = state.get("num_travelers", 1)
+    rooms_needed  = max(1, (num_travelers + 1) // 2)
+
+    price_pp      = transport.get("price", 0)
+    transport_ow  = price_pp * num_travelers
+    ppn           = hotel.get("price_per_night", 0)
+    stay_per_night = ppn * rooms_needed
 
     itinerary = [{
         "day_number":1, "date":start.strftime("%Y-%m-%d"),
@@ -948,12 +1292,12 @@ def _itinerary_fallback(state: dict) -> dict:
             {"time":"06:00","type":"transport","title":f"Depart {state['origin']}",
              "description":f"{transport.get('operator','Train')} → {dest}",
              "duration_mins":transport.get("duration_mins",360),
-             "cost":transport.get("price",0),"notes":"","maps_link":"","booking_link":"","weather_note":""},
+             "cost":transport_ow,"notes":"","maps_link":"","booking_link":"","weather_note":""},
             {"time":"14:00","type":"checkin","title":f"Check in — {hotel.get('name','Hotel')}",
              "description":"Check in","duration_mins":60,
-             "cost":hotel.get("price_per_night",0),"notes":"","maps_link":"","booking_link":"","weather_note":""},
+             "cost":stay_per_night,"notes":"","maps_link":"","booking_link":"","weather_note":""},
         ],
-        "daily_cost_estimate":transport.get("price",0)+hotel.get("price_per_night",0)+300,
+        "daily_cost_estimate":transport_ow+stay_per_night+300,
         "highlights":["Arrival"],
     }]
     for d in range(2, duration):
@@ -970,7 +1314,7 @@ def _itinerary_fallback(state: dict) -> dict:
             day_cost += a["price"]
         itinerary.append({"day_number":d,"date":day_date,"city":dest,
                           "theme":f"Day {d}","segments":segs,
-                          "daily_cost_estimate":day_cost+hotel.get("price_per_night",0),
+                          "daily_cost_estimate":day_cost+stay_per_night,
                           "highlights":[a["name"] for a in acts[:2]]})
     last = (start+timedelta(days=duration-1)).strftime("%Y-%m-%d")
     itinerary.append({"day_number":duration,"date":last,"city":dest,"theme":"Return",
@@ -978,9 +1322,9 @@ def _itinerary_fallback(state: dict) -> dict:
                                    "title":f"Return to {state['origin']}",
                                    "description":"Return journey",
                                    "duration_mins":transport.get("duration_mins",360),
-                                   "cost":transport.get("price",0),"notes":"",
+                                   "cost":transport_ow,"notes":"",
                                    "maps_link":"","booking_link":"","weather_note":""}],
-                      "daily_cost_estimate":transport.get("price",0)+200,
+                      "daily_cost_estimate":transport_ow+200,
                       "highlights":["Safe return"]})
     # Use projected_total from Step 2 as authoritative cost (same fix as main path)
     projected_total = state.get("projected_total", 0)
@@ -991,24 +1335,24 @@ def _itinerary_fallback(state: dict) -> dict:
     return {
         "daily_itinerary": itinerary,
         "final_budget_summary": {
-            "travel":          approved.get("travel",      {}).get("allocated", transport.get("price",0)*2),
-            "stay":            approved.get("stay",        {}).get("allocated", hotel.get("price_per_night",0)*(duration-1)),
+            "travel":          approved.get("travel",      {}).get("allocated", transport_ow * 2),
+            "stay":            approved.get("stay",        {}).get("allocated", stay_per_night * (duration-1)),
             "food":            approved.get("food",        {}).get("allocated", 450*duration),
             "activities":      approved.get("activities",  {}).get("allocated", sum(a["price"] for a in activities)),
             "local_transport": approved.get("local_transport",{}).get("allocated", 800),
             "buffer":          approved.get("buffer",      {}).get("allocated", 0),
             "estimated_total": total,
-            "remaining":       state["budget"] - total,
+            "remaining":       max(state["budget"] - total, 0),
         },
         "trip_summary": {
             "destination":    dest,
             "duration":       f"{duration} Days",
             "budget":         f"Rs {state['budget']:,}",
             "style":          travel_style,
-            "travelers":      state.get("num_travelers",1),
+            "travelers":      num_travelers,
             "dates":          f"{state['travel_dates']['start']} to {state['travel_dates']['end']}",
             "estimated_cost": f"Rs {total:,}",
-            "savings":        f"Rs {state['budget']-total:,} remaining",
+            "savings":        f"Rs {max(state['budget']-total, 0):,} remaining",
             "is_multi_city":  False,
             "city_stops":     state.get("city_stops", []),
         },

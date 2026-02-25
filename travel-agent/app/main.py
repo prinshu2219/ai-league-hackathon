@@ -304,8 +304,8 @@ def render_checkpoint_2(interrupt_data: dict):
         st.warning(w)
 
     # Clear explanation so user understands what these numbers mean
-    remaining_after_trip = budget - projected
-    colour = "#22C55E" if remaining_after_trip >= 0 else "#EF4444"
+    remaining_after_trip = max(budget - projected, 0)
+    colour = "#22C55E" if budget >= projected else "#EF4444"
     st.markdown(f"""
     <div style='background:#111827;border:1px solid #1F2937;border-radius:10px;
                 padding:12px 16px;margin-bottom:1rem;display:flex;gap:2rem'>
@@ -338,19 +338,19 @@ def render_checkpoint_2(interrupt_data: dict):
     updated = {}
     total   = 0
 
-    # Slider max = budget (so user can shift money between categories freely)
-    # but we show a live "over budget" warning if total exceeds budget
+    slider_cap = max(budget, projected)
     for cat, data in breakdown.items():
         c1, c2, c3 = st.columns([2, 3, 1])
         with c1:
             st.markdown(f"**{icons.get(cat, '💰')} {cat.replace('_', ' ').title()}**")
             st.caption(data.get("notes", ""))
         with c2:
+            allocated = data.get("allocated", 0)
             val = st.slider(
                 f"Budget for {cat}",
                 min_value=0,
-                max_value=budget,
-                value=min(data.get("allocated", 0), budget),
+                max_value=max(slider_cap, allocated),
+                value=allocated,
                 step=100,
                 key=f"sl_{cat}",
                 label_visibility="collapsed",
@@ -371,18 +371,22 @@ def render_checkpoint_2(interrupt_data: dict):
                   delta=f"₹{total - projected:,} vs estimate",
                   delta_color="inverse")
     with col3:
-        rem = budget - total
+        rem = max(budget - total, 0)
         st.metric("Remaining", f"₹{rem:,}",
                   delta="over budget" if over else "within budget",
                   delta_color="inverse" if over else "normal")
 
     if over:
-        st.error(f"⚠️ Allocated ₹{total:,} exceeds your budget ₹{budget:,} by ₹{total-budget:,}. Reduce sliders above.")
+        st.warning(
+            f"⚠️ Allocated ₹{total:,} exceeds your budget ₹{budget:,} by "
+            f"₹{total-budget:,}. You can reduce sliders or approve as-is "
+            f"(your budget will be updated to ₹{total:,})."
+        )
 
     col_l, col_btn, col_r = st.columns([1, 2, 1])
     with col_btn:
         if st.button("✅ Approve Budget", type="primary",
-                     use_container_width=True, disabled=over):
+                     use_container_width=True):
             return {"approved_budget": updated}
     return None
 
@@ -416,8 +420,8 @@ def render_checkpoint_3(interrupt_data: dict):
     # cart_total only covers transport + hotel + activities — it deliberately
     # excludes food, local transport and buffer (can't pre-book those).
     display_total   = full_trip_estimate if full_trip_estimate > 0 else cart_total
-    remaining_total = budget - display_total
-    colour_total    = "#22C55E" if remaining_total >= 0 else "#EF4444"
+    remaining_total = max(budget - display_total, 0)
+    colour_total    = "#22C55E" if budget >= display_total else "#EF4444"
 
     st.markdown(f"""
     <div style='background:#111827;border:1px solid #1F2937;border-radius:10px;
@@ -644,7 +648,7 @@ def render_final_output(state: dict):
         c1, c2, c3 = st.columns(3)
         with c1: st.metric("Budget",    f"₹{b:,}")
         with c2: st.metric("Total",     f"₹{t:,}")
-        with c3: st.metric("Remaining", f"₹{b - t:,}")
+        with c3: st.metric("Remaining", f"₹{max(b - t, 0):,}")
 
     # ── PDF Download ──────────────────────────────────────
     st.markdown("---")
@@ -972,6 +976,28 @@ def main():
         response = render_checkpoint_3(interrupt_data)
 
     if response:
+        # Checkpoint 3 "Modify Plan" — start a fresh graph thread so the
+        # workflow properly hits checkpoints 1 → 2 → 3 again.  Simply
+        # resetting the UI to show CP1 doesn't work because the old thread
+        # is still paused at the CP3 interrupt; Command(resume=...) would
+        # feed the CP1 response into CP3 and skip straight to the itinerary.
+        if checkpoint == 3 and not response.get("confirmed", True):
+            old_state = st.session_state.get("graph_state") or {}
+            user_msg = old_state.get("user_message", "")
+            if not user_msg:
+                st.error("Cannot modify: original request not found. Please start a new plan.")
+                return
+
+            fresh_tid = str(uuid.uuid4())
+            st.session_state["thread_id"] = fresh_tid
+            with st.spinner("🔄 Re-generating plan options — this may take a moment..."):
+                new_state, new_interrupt = run_graph(create_initial_state(user_msg))
+            st.session_state["graph_state"]    = new_state
+            st.session_state["interrupt_data"] = new_interrupt
+            st.session_state["checkpoint_num"] = checkpoint_num_from_interrupt(new_interrupt)
+            st.rerun()
+            return
+
         msgs = {
             1: "🤖 GPT-4o building smart budget breakdown...",
             2: "🛒 Assembling booking cart...",

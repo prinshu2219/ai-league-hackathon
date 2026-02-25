@@ -68,6 +68,11 @@ def _mmt_hotel_link(hotel_name: str, destination: str,
     )
 
 
+def _is_international_dest(destination: str) -> bool:
+    from app.agents import _is_indian_city
+    return not _is_indian_city(destination)
+
+
 def get_accommodation_options(destination: str, style: str,
                                check_in: str, check_out: str,
                                duration_days: int, budget: int,
@@ -80,23 +85,39 @@ def get_accommodation_options(destination: str, style: str,
     """
     print(f"   🤖 [Hotels] GPT-4o: {destination} ({style})...")
 
+    international    = _is_international_dest(destination)
     nights           = max(duration_days - 1, 1)
     budget_per_night = int((budget * 0.25) / nights)
 
-    style_desc = {
-        "backpacking": f"hostels and cheap guesthouses, max Rs {min(budget_per_night, 800)}/night",
-        "budget":      f"budget hotels Rs 500-1500/night",
-        "mid-range":   f"comfortable 3-star hotels Rs 1500-4000/night",
-        "luxury":      f"4-5 star hotels and resorts Rs 4000+/night",
-        "family":      f"family-friendly hotels with good amenities",
-        "adventure":   f"camps, river camps, or homestays near activities",
-    }.get(style, f"mid-range hotels around Rs {budget_per_night}/night")
+    if international:
+        style_desc = {
+            "backpacking": f"hostels and budget stays, max Rs {min(budget_per_night, 3000)}/night",
+            "budget":      f"budget hotels Rs 2000-5000/night",
+            "mid-range":   f"comfortable 3-star hotels Rs 5000-12000/night",
+            "luxury":      f"4-5 star hotels Rs 12000+/night",
+            "family":      f"family-friendly hotels with good amenities",
+            "adventure":   f"unique stays, Airbnbs, or hostels near activities",
+        }.get(style, f"mid-range hotels around Rs {budget_per_night}/night")
+    else:
+        style_desc = {
+            "backpacking": f"hostels and cheap guesthouses, max Rs {min(budget_per_night, 800)}/night",
+            "budget":      f"budget hotels Rs 500-1500/night",
+            "mid-range":   f"comfortable 3-star hotels Rs 1500-4000/night",
+            "luxury":      f"4-5 star hotels and resorts Rs 4000+/night",
+            "family":      f"family-friendly hotels with good amenities",
+            "adventure":   f"camps, river camps, or homestays near activities",
+        }.get(style, f"mid-range hotels around Rs {budget_per_night}/night")
 
-    system = """You are an expert on hotels and accommodation across India.
+    location_context = destination if international else f"{destination}, India"
+    currency_note = ("Prices must be in INR (convert from local currency). "
+                     "International hotel prices are typically higher than Indian ones."
+                     if international else "")
+
+    system = f"""You are an expert on hotels and accommodation worldwide.
 Generate real accommodation options that ACTUALLY EXIST in the destination.
 
-Return JSON {"hotels": [...]} with exactly 3 objects:
-{
+Return JSON {{"hotels": [...]}} with exactly 3 objects:
+{{
   "name": "EXACT real hotel/hostel name — must actually exist",
   "type": "hostel|guesthouse|hotel|resort|camp|homestay",
   "area": "specific area/neighbourhood within the city",
@@ -106,17 +127,18 @@ Return JSON {"hotels": [...]} with exactly 3 objects:
   "amenities": ["wifi", "hot_water", ...],
   "why_recommended": "one specific sentence mentioning real features",
   "notes": "one practical tip (early booking, location advantage etc.)"
-}
+}}
 
 CRITICAL RULES:
 - Names must be REAL properties that actually exist and are bookable
-- price_per_night must match the style (backpacking Rs 400-900, mid Rs 1500-3500, luxury Rs 5000+)
+- price_per_night must be realistic for {location_context} in INR
+- {currency_note}
 - Give 3 options across a price range (budget, mid, best-value)
 - amenities from: wifi, hot_water, ac, pool, restaurant, breakfast_included,
   yoga, rooftop, parking, river_view, mountain_view, bonfire, kayaking
 - why_recommended must mention something specific and real about the property"""
 
-    user = f"""Destination: {destination}, India
+    user = f"""Destination: {location_context}
 Style: {style} — {style_desc}
 Check-in: {check_in}, Check-out: {check_out} ({nights} nights)
 Travelers: {num_travelers}
