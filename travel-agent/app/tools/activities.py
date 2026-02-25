@@ -110,8 +110,17 @@ def _search_places(query: str, lat: float, lng: float,
     return resp.json().get("places", [])
 
 
-def _price_level_to_inr(price_level: str | None) -> int:
-    """Map Google price level to approximate INR cost."""
+def _price_level_to_inr(price_level: str | None, international: bool = False) -> int:
+    """Map Google price level to approximate INR cost (fallback only)."""
+    if international:
+        mapping = {
+            "PRICE_LEVEL_FREE":          0,
+            "PRICE_LEVEL_INEXPENSIVE":   800,
+            "PRICE_LEVEL_MODERATE":      2500,
+            "PRICE_LEVEL_EXPENSIVE":     5000,
+            "PRICE_LEVEL_VERY_EXPENSIVE": 8000,
+        }
+        return mapping.get(price_level or "", 0)
     mapping = {
         "PRICE_LEVEL_FREE":          0,
         "PRICE_LEVEL_INEXPENSIVE":   200,
@@ -119,7 +128,7 @@ def _price_level_to_inr(price_level: str | None) -> int:
         "PRICE_LEVEL_EXPENSIVE":     1500,
         "PRICE_LEVEL_VERY_EXPENSIVE": 3000,
     }
-    return mapping.get(price_level or "", 300)
+    return mapping.get(price_level or "", 0)
 
 
 def _hours_summary(opening_hours: dict | None) -> str:
@@ -135,72 +144,84 @@ def _places_to_activities(places: list[dict], interests: list[str],
                            destination: str, duration_days: int) -> list[dict]:
     """
     Convert raw Google Places results to our activity format.
-    Uses GPT-4o to assign best_day and write why_recommended.
+    Uses GPT-4o to assign best_day, estimate real ticket prices,
+    and write why_recommended.
     """
     if not places:
         return []
 
-    # Build lightweight summary for GPT-4o
+    international = _is_international_dest(destination)
+
     places_summary = []
     for i, p in enumerate(places[:10]):
         name    = p.get("displayName", {}).get("text", "Unknown")
         summary = p.get("editorialSummary", {}).get("text", "")
         rating  = p.get("rating", 0)
         count   = p.get("userRatingCount", 0)
-        price   = _price_level_to_inr(p.get("priceLevel"))
+        google_price_level = p.get("priceLevel", "")
         places_summary.append({
             "index": i,
             "name":  name,
             "summary": summary[:150],
             "rating": rating,
             "review_count": count,
-            "price_inr": price,
+            "google_price_level": google_price_level or "unknown",
         })
 
-    prompt = f"""You are a travel planner. Given these places in {destination},
-assign each one:
+    prompt = f"""You are a travel planner with knowledge of actual attraction prices.
+Given these places in {destination}, assign each one:
 1. best_day: which day (1-{duration_days}) is best for this activity
 2. duration_hours: realistic time to spend (0.5 - 4)
-3. why_recommended: one sentence specific to interests: {', '.join(interests)}
-4. activity_type: one of adventure/spiritual/cultural/nature/food/wellness/free_time
+3. price_inr: the realistic entry/ticket price in Indian Rupees (₹).
+   - Use your knowledge of actual ticket prices for well-known attractions.
+   - For example: NYC observation decks cost $35-45 (~₹2,900-3,750),
+     museums $20-30 (~₹1,650-2,500), walking in parks/public areas = 0.
+   - Parks, public plazas, markets with no entry fee = 0
+   - Convert from local currency to INR (1 USD ≈ ₹83, 1 EUR ≈ ₹90, 1 GBP ≈ ₹105)
+   - For Indian destinations, use actual INR prices directly.
+4. why_recommended: one sentence specific to interests: {', '.join(interests)}
+5. activity_type: one of adventure/spiritual/cultural/nature/food/wellness/free_time
 
-Return JSON array:
-[{{"index": 0, "best_day": 2, "duration_hours": 2.5, "why_recommended": "...", "activity_type": "adventure"}}, ...]
+Return JSON: {{"activities": [{{"index": 0, "best_day": 2, "duration_hours": 2.5,
+"price_inr": 3000, "why_recommended": "...", "activity_type": "cultural"}}, ...]}}
 
 Rules:
 - Spread activities across different days
 - Day 1 = arrival day (light activities only)
 - Day {duration_days} = departure day (morning only)
 - Duration should be realistic
-- Match why_recommended to the traveler's interests"""
+- price_inr MUST be realistic — do NOT default everything to the same value
+- Free attractions (parks, beaches, public squares) should have price_inr = 0"""
 
     resp = _openai().chat.completions.create(
-        model=config.FAST_MODEL,   # gpt-4o-mini sufficient for this
+        model=config.FAST_MODEL,
         temperature=0.2,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt +
                    f"\n\nPlaces:\n{json.dumps(places_summary, indent=2)}"}],
     )
     enrichment_list = json.loads(resp.choices[0].message.content)
-    # Handle both list and dict response
     if isinstance(enrichment_list, dict):
         enrichment_list = enrichment_list.get("activities", enrichment_list.get("places", []))
 
     enrichment = {item["index"]: item for item in enrichment_list
                   if isinstance(item, dict)}
 
-    # Merge Places data + GPT-4o enrichment into our format
     activities = []
     for i, p in enumerate(places[:10]):
         name     = p.get("displayName", {}).get("text", "")
         summary  = p.get("editorialSummary", {}).get("text", "A popular attraction.")
         rating   = p.get("rating", 4.0)
         count    = p.get("userRatingCount", 0)
-        price    = _price_level_to_inr(p.get("priceLevel"))
         maps_uri = p.get("googleMapsUri", "")
-        loc      = p.get("location", {})
         hours    = _hours_summary(p.get("regularOpeningHours"))
         enrich   = enrichment.get(i, {})
+
+        gpt_price = enrich.get("price_inr")
+        if gpt_price is not None and isinstance(gpt_price, (int, float)):
+            price = int(gpt_price)
+        else:
+            price = _price_level_to_inr(p.get("priceLevel"), international)
 
         activities.append({
             "id":              f"act_{i+1}",
