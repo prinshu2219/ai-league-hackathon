@@ -57,6 +57,12 @@ class Config:
         "REDDIT_USER_AGENT", "TravelPlannerBot/1.0"
     )
 
+    # ── Database (trip history) ───────────────────────────
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL",
+        "",
+    )
+
     # ── App Settings ──────────────────────────────────────
     APP_ENV: str    = os.getenv("APP_ENV", "development")
     DEBUG: bool     = os.getenv("DEBUG", "true").lower() == "true"

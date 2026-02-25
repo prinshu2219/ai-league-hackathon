@@ -21,6 +21,7 @@ from langgraph.types import Command
 from app.core.state import create_initial_state
 from app.core.graph import travel_graph
 from app.utils.demo_data import get_demo_state
+from app.db import get_trip, list_trips, save_trip
 
 st.set_page_config(page_title="AI Travel Planner", page_icon="🌍", layout="wide")
 
@@ -709,49 +710,59 @@ def render_final_output(state: dict):
         if clicked_action:
             with st.spinner(f"🔄 GPT-4o is updating your plan..."):
                 try:
-                    from app.agents import (replan_agent, activities_finder_agent,
-                                             budget_architect_agent,
-                                             itinerary_architect_agent,
-                                             pdf_generator_agent,
-                                             map_generator_agent)
+                    from app.agents import (
+                        replan_agent,
+                        accommodation_scout_agent,
+                        activities_finder_agent,
+                        budget_architect_agent,
+                        booking_cart_agent,
+                        itinerary_architect_agent,
+                        pdf_generator_agent,
+                        map_generator_agent,
+                    )
 
-                    # ── BUG FIX: start from a COPY of the full current state
-                    # then MERGE (update) replan_agent's tiny return dict into it.
-                    # Previously: updated_state = replan_agent(...) wiped ALL state
-                    # because replan_agent returns only 3 keys.
                     updated_state = {**state,
                                      "replan_instruction": clicked_action,
                                      "replan_requested":   True}
-                    replan_result = replan_agent(updated_state)   # returns 3 keys only
-                    updated_state.update(replan_result)           # MERGE, don't replace
+                    replan_result = replan_agent(updated_state)
+                    updated_state.update(replan_result)
 
                     scope = updated_state.get("replan_scope", [])
+                    ran_accommodation = False
+                    ran_activities = False
 
-                    # Step 1: re-fetch activities if needed
-                    if any(k in scope for k in ["activities_finder", "itinerary_architect",
-                                                 "booking_cart_node"]):
+                    # Step 1: re-fetch accommodation if "Better hotel" etc.
+                    if "accommodation_scout" in scope:
+                        acc = accommodation_scout_agent(updated_state)
+                        updated_state.update(acc)
+                        ran_accommodation = True
+
+                    # Step 2: re-fetch activities if "More adventure" / "More spiritual" etc.
+                    if "activities_finder" in scope:
                         acts = activities_finder_agent(updated_state)
                         updated_state.update(acts)
+                        ran_activities = True
 
-                    # Step 2: rebuild budget if "make it cheaper" etc.
+                    # Step 3: rebuild budget if "make it cheaper" etc.
                     if "budget_architect_node" in scope:
                         bgt = budget_architect_agent(updated_state)
                         updated_state.update(bgt)
-                        # auto-approve in replan (skip human checkpoint)
-                        updated_state["approved_budget"]  = updated_state.get("budget_breakdown", {})
-                        updated_state["projected_total"]  = updated_state.get("projected_total",
+                        updated_state["approved_budget"] = updated_state.get("budget_breakdown", {})
+                        updated_state["projected_total"] = updated_state.get("projected_total",
                                                                 state.get("projected_total", 0))
 
-                    # Step 3: always rebuild itinerary
+                    # Step 4: rebuild cart when accommodation, activities, or cart in scope
+                    if ("booking_cart_node" in scope or ran_accommodation or ran_activities):
+                        cart_result = booking_cart_agent(updated_state)
+                        updated_state.update(cart_result)
+
+                    # Step 5: rebuild itinerary, PDF, map
                     itin = itinerary_architect_agent(updated_state)
                     updated_state.update(itin)
-
-                    # Step 4: rebuild PDF and map
                     pdf = pdf_generator_agent(updated_state)
                     updated_state.update(pdf)
-                    mp  = map_generator_agent(updated_state)
+                    mp = map_generator_agent(updated_state)
                     updated_state.update(mp)
-
                     updated_state["current_phase"] = "complete"
 
                 except Exception as e:
@@ -852,6 +863,33 @@ def main():
             st.session_state["graph_state"]   = get_demo_state()
             st.rerun()
 
+        # Trip history (when DB is configured)
+        try:
+            recent = list_trips(limit=10)
+            if recent:
+                st.markdown("---")
+                with st.expander("📁 Trip history", expanded=False):
+                    for t in recent:
+                        dest = t.get("destination", "Unknown")
+                        updated = t.get("updated_at") or t.get("created_at")
+                        if hasattr(updated, "strftime"):
+                            date_str = updated.strftime("%b %d, %Y")
+                        else:
+                            date_str = str(updated)[:10]
+                        tid = t.get("id")
+                        if st.button(f"Load: {dest} ({date_str})", key=f"load_trip_{tid}", use_container_width=True):
+                            loaded = get_trip(tid)
+                            if loaded:
+                                for k in list(st.session_state.keys()):
+                                    del st.session_state[k]
+                                st.session_state["thread_id"]    = loaded.get("thread_id") or str(uuid.uuid4())
+                                st.session_state["started"]     = True
+                                st.session_state["planning_done"] = True
+                                st.session_state["graph_state"] = loaded
+                                st.rerun()
+        except Exception:
+            pass
+
         st.markdown("---")
         state = st.session_state.get("graph_state") or {}
         dest  = state.get("destination", "")
@@ -950,6 +988,12 @@ def main():
             else:
                 st.session_state["interrupt_data"] = None
                 st.session_state["planning_done"]  = True
+                # Persist trip history when plan completes (skip in demo mode)
+                if not st.session_state.get("is_demo_mode") and state.get("current_phase") == "complete":
+                    try:
+                        save_trip(st.session_state.get("thread_id"), state)
+                    except Exception:
+                        pass
         except Exception as e:
             # Surface the error in the UI with a retry option
             current_state = st.session_state.get("graph_state") or {}
