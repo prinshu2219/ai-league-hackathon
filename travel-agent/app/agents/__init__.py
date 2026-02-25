@@ -136,10 +136,11 @@ Extract travel intent (detect multi-city carefully):"""
         city_stops    = result.get("city_stops", [])
 
         # Ensure city_stops always has at least one entry
+        # days = duration - 1 because day 1 is travel/arrival (per GPT prompt rules)
         if not city_stops:
             city_stops = [{
                 "city": destination,
-                "days": duration,
+                "days": max(duration - 1, 1),
                 "transport_from_prev": "train",
                 "transport_time_hrs": 6,
                 "highlights": [],
@@ -223,7 +224,7 @@ def _intent_fallback(state: dict, next_fri: datetime) -> dict:
                                "reason": "Fallback", "can_edit": True}],
         "interests_inferred": True,
         "is_multi_city": False,
-        "city_stops": [{"city": "Rishikesh", "days": 4,
+        "city_stops": [{"city": "Rishikesh", "days": 3,
                         "transport_from_prev": "train",
                         "transport_time_hrs": 6, "highlights": []}],
         "city_itineraries": {"Rishikesh": [2, 3, 4]},
@@ -825,7 +826,7 @@ Build the complete itinerary:"""
 
         # ── USE projected_total FROM STEP 2 AS AUTHORITATIVE COST ──────
         projected_total = state.get("projected_total", 0)
-        approved        = state.get("budget_breakdown", {})
+        approved        = state.get("approved_budget") or state.get("budget_breakdown", {})
         daily_sum_raw   = sum(d["daily_cost_estimate"] for d in itinerary)
         total_cost      = (projected_total if projected_total > 0
                            else int(result.get("total_estimated_cost", daily_sum_raw)))
@@ -932,12 +933,13 @@ Build the complete itinerary:"""
 
 def _itinerary_fallback(state: dict) -> dict:
     """Template fallback — single-city only."""
-    start     = datetime.strptime(state["travel_dates"]["start"], "%Y-%m-%d")
-    transport = state.get("selected_transport",{})
-    hotel     = state.get("selected_accommodation",{})
-    activities = state.get("selected_activities",[])
-    duration  = state["duration_days"]
-    dest      = state["destination"]
+    start        = datetime.strptime(state["travel_dates"]["start"], "%Y-%m-%d")
+    transport    = state.get("selected_transport",{})
+    hotel        = state.get("selected_accommodation",{})
+    activities   = state.get("selected_activities",[])
+    duration     = state["duration_days"]
+    dest         = state["destination"]
+    travel_style = state.get("travel_style", "backpacking")
 
     itinerary = [{
         "day_number":1, "date":start.strftime("%Y-%m-%d"),
@@ -982,7 +984,7 @@ def _itinerary_fallback(state: dict) -> dict:
                       "highlights":["Safe return"]})
     # Use projected_total from Step 2 as authoritative cost (same fix as main path)
     projected_total = state.get("projected_total", 0)
-    approved        = state.get("budget_breakdown", {})
+    approved        = state.get("approved_budget") or state.get("budget_breakdown", {})
     daily_sum       = sum(d["daily_cost_estimate"] for d in itinerary)
     total           = projected_total if projected_total > 0 else daily_sum
 

@@ -76,13 +76,13 @@ def _activity_impact(daily: dict) -> dict:
 
     def rating(threshold_rain):
         return "excellent" if rain_days == 0 else (
-               "good"      if rain_days <= 1 else (
-               "fair"      if rain_days <= 2 else "poor"))
+               "good"      if rain_days <= threshold_rain else (
+               "fair"      if rain_days <= threshold_rain + 1 else "poor"))
 
     return {
-        "rafting":     rating(1),
+        "rafting":     rating(0),
         "trekking":    rating(1),
-        "yoga":        "excellent",   # always possible
+        "yoga":        "excellent",
         "sightseeing": rating(2),
     }
 
