@@ -186,36 +186,6 @@ travel-agent/
 
 ---
 
-## Quick Start
-
-### Docker (recommended)
-
-```bash
-cp .env.example .env
-# Edit .env — set at least OPENAI_API_KEY
-docker compose up --build
-# Open http://localhost:8501
-```
-
-### Local development
-
-```bash
-# Start only Postgres in Docker
-docker compose up postgres -d
-
-cp .env.example .env
-# Edit .env — set OPENAI_API_KEY and DATABASE_URL
-
-pip install -r requirements.txt
-streamlit run app/main.py
-```
-
-### Deploy to AWS
-
-See [DEPLOY_AWS.md](DEPLOY_AWS.md) for the full EC2 + Docker Compose deployment guide.
-
----
-
 ## Configuration
 
 All configuration is in `.env`. Key variables:
