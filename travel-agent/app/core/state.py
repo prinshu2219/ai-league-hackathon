@@ -77,6 +77,7 @@ class TravelPlanState(TypedDict):
     # ── LAYER 5: BOOKING CART ─────────────────────────────
     booking_cart:           Annotated[List[Any], _keep_last_list]
     cart_total:             Annotated[int, _keep_last]
+    full_trip_estimate:     Annotated[int, _keep_last]
     selected_transport:     Annotated[dict, _keep_last]
     selected_accommodation: Annotated[dict, _keep_last]
     selected_activities:    Annotated[List[Any], _keep_last_list]
@@ -155,6 +156,7 @@ def create_initial_state(user_message: str) -> dict:
         # cart
         "booking_cart":                [],
         "cart_total":                  0,
+        "full_trip_estimate":          0,
         "selected_transport":          {},
         "selected_accommodation":      {},
         "selected_activities":         [],

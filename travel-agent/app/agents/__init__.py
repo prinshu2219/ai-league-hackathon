@@ -58,7 +58,9 @@ _INDIAN_CITIES = {
 
 
 def _is_indian_city(city: str) -> bool:
-    return city.lower().strip() in _INDIAN_CITIES
+    """Check if a city (or comma-separated list of cities) is Indian."""
+    parts = [c.strip().lower() for c in city.split(",") if c.strip()]
+    return all(p in _INDIAN_CITIES for p in parts) if parts else False
 
 
 # Per-destination cost tiers: round-trip flight (INR/person) + daily cost (INR/person/day)
@@ -119,14 +121,23 @@ for _tier, _cities in _TIER_MAP_RAW.items():
         _CITY_TO_TIER[_c] = _tier
 
 
+def _lookup_tier(destination: str) -> str:
+    """Resolve a (possibly comma-separated) destination to a cost tier key.
+    For multi-city, uses the most expensive city's tier."""
+    parts = [c.strip().lower() for c in destination.split(",") if c.strip()]
+    if not parts:
+        return "europe"
+    tier_keys = [_CITY_TO_TIER.get(p, "europe") for p in parts]
+    return max(tier_keys, key=lambda k: _COST_TIERS[k]["daily"])
+
+
 def _estimate_min_budget(destination: str, duration: int,
                          num_travelers: int) -> tuple[int, str]:
     """
     Estimate the realistic minimum budget for an international trip.
     Returns (min_budget_inr, breakdown_explanation).
     """
-    dest_lower = destination.lower().strip()
-    tier_key = _CITY_TO_TIER.get(dest_lower, "europe")
+    tier_key = _lookup_tier(destination)
     tier = _COST_TIERS[tier_key]
 
     flight = tier["flight_rt"] * num_travelers
@@ -157,9 +168,9 @@ def _validate_trip_feasibility(
     is_international = not (origin_indian and dest_indian)
 
     if is_international:
-        if duration < 4:
+        if duration < 5:
             old = duration
-            duration = max(5, old)
+            duration = 5
             assumptions.append({
                 "field": "duration",
                 "assumed_value": f"{duration} days",
@@ -196,13 +207,15 @@ def _validate_trip_feasibility(
                 f"{origin} → {destination} trip. Adjusted to ₹{budget:,}."
             )
 
-        for stop in city_stops:
-            if stop.get("transport_from_prev") in (
-                "train", "bus", "car", "shared_cab",
-            ):
-                stop["transport_from_prev"] = "flight"
-            if stop.get("transport_time_hrs", 0) < 4:
-                stop["transport_time_hrs"] = 15
+        for idx, stop in enumerate(city_stops):
+            if idx == 0:
+                # First leg: origin (India) → first international city must be a flight
+                if stop.get("transport_from_prev") in (
+                    "train", "bus", "car", "shared_cab",
+                ):
+                    stop["transport_from_prev"] = "flight"
+                if stop.get("transport_time_hrs", 0) < 4:
+                    stop["transport_time_hrs"] = 15
 
     else:
         min_budget_dom = max(1500, 1000 * num_travelers)
@@ -729,7 +742,7 @@ def _options_fallback(state: dict) -> dict:
         "C": {
             "style_name": "Experience First", "style_tag": "Splurge on what matters",
             "highlights": ["Premium activity", "Better stay", "Guided tours", "Special dinner"],
-            "estimated_total": base_fixed + int(remaining * 1.2),
+            "estimated_total": base_travel + int(base_stay * 1.3) + int(remaining*0.30) + int(remaining*0.45) + int(remaining*0.10) + int(remaining*0.05),
             "rough_breakdown": {"travel": base_travel, "stay": int(base_stay * 1.3),
                                  "food": int(remaining*0.30), "activities": int(remaining*0.45),
                                  "local_transport": int(remaining*0.10), "buffer": int(remaining*0.05)},
@@ -1316,16 +1329,25 @@ def _itinerary_fallback(state: dict) -> dict:
                           "theme":f"Day {d}","segments":segs,
                           "daily_cost_estimate":day_cost+stay_per_night,
                           "highlights":[a["name"] for a in acts[:2]]})
-    last = (start+timedelta(days=duration-1)).strftime("%Y-%m-%d")
-    itinerary.append({"day_number":duration,"date":last,"city":dest,"theme":"Return",
-                      "segments":[{"time":"12:00","type":"transport",
-                                   "title":f"Return to {state['origin']}",
-                                   "description":"Return journey",
-                                   "duration_mins":transport.get("duration_mins",360),
-                                   "cost":transport_ow,"notes":"",
-                                   "maps_link":"","booking_link":"","weather_note":""}],
-                      "daily_cost_estimate":transport_ow+200,
-                      "highlights":["Safe return"]})
+    if duration > 1:
+        last = (start+timedelta(days=duration-1)).strftime("%Y-%m-%d")
+        itinerary.append({"day_number":duration,"date":last,"city":dest,"theme":"Return",
+                          "segments":[{"time":"12:00","type":"transport",
+                                       "title":f"Return to {state['origin']}",
+                                       "description":"Return journey",
+                                       "duration_mins":transport.get("duration_mins",360),
+                                       "cost":transport_ow,"notes":"",
+                                       "maps_link":"","booking_link":"","weather_note":""}],
+                          "daily_cost_estimate":transport_ow+200,
+                          "highlights":["Safe return"]})
+    else:
+        itinerary[0]["segments"].append({
+            "time":"18:00","type":"transport",
+            "title":f"Return to {state['origin']}",
+            "description":"Return journey",
+            "duration_mins":transport.get("duration_mins",360),
+            "cost":transport_ow,"notes":"","maps_link":"","booking_link":"","weather_note":""})
+        itinerary[0]["daily_cost_estimate"] += transport_ow
     # Use projected_total from Step 2 as authoritative cost (same fix as main path)
     projected_total = state.get("projected_total", 0)
     approved        = state.get("approved_budget") or state.get("budget_breakdown", {})
