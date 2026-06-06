@@ -18,6 +18,12 @@ from rag_engine.knowledge_base import add_documents_to_kb, url_exists_in_kb
 from utils.output_parser import parse_verdict_response
 from utils.source_credibility import build_credibility_context
 from utils.web_result_parser import parse_web_observation
+from utils.guardrails import (
+    run_input_guardrails,
+    run_output_guardrails,
+    build_blocked_result,
+)
+from utils.compliance import attach_compliance_metadata, write_audit_log
 
 load_dotenv()
 
@@ -71,12 +77,27 @@ def verify_claim(claim: str) -> dict:
     print(f"VERIFYING CLAIM: {claim}")
     print(f"{'='*60}\n")
 
+    # ── Layer 1: Input guardrails (PII mask, length, injection detection) ──
+    input_guard = run_input_guardrails(claim)
+    if not input_guard.allowed:
+        print(f"🛑 Blocked by input guardrails: {input_guard.block_reason}")
+        blocked = build_blocked_result(claim, input_guard.block_reason, input_guard.warnings)
+        blocked = attach_compliance_metadata(blocked, claim)
+        write_audit_log(blocked, session_id=blocked.get("compliance_metadata", {}).get("audit_session_id"))
+        return blocked
+
+    claim_for_llm = input_guard.claim_for_processing
+    pii_lookup = input_guard.pii_result.lookup if input_guard.pii_result else {}
+    if input_guard.warnings:
+        for w in input_guard.warnings:
+            print(f"   ⚠️ Input guardrail: {w}")
+
     # ── Step 1: Agent gathers evidence ──────────────────────────────
     agent = build_agent()
 
     agent_query = (
         f'Please verify the following claim by searching available sources:\n\n'
-        f'CLAIM: "{claim}"\n\n'
+        f'CLAIM: "{claim_for_llm}"\n\n'
         f'MANDATORY INSTRUCTIONS:\n'
         f'1. FIRST search the knowledge base\n'
         f'2. THEN do at least 2 separate web searches with different queries\n'
@@ -138,7 +159,7 @@ def verify_claim(claim: str) -> dict:
     llm = get_llm()
 
     verification_prompt_text = VERIFICATION_PROMPT.format(
-        claim=claim,
+        claim=claim_for_llm,
         evidence=full_evidence_final
     )
 
@@ -155,9 +176,16 @@ def verify_claim(claim: str) -> dict:
             "EVIDENCE QUALITY: NONE"
         )
 
-    # ── Step 4: Parse and return structured output ───────────────────
+    # ── Step 4: Parse structured output ──────────────────────────────
     result = parse_verdict_response(raw_verdict, claim)
     result["agent_steps"] = _format_agent_steps(intermediate_steps)
+
+    # ── Layers 4 & 5: Output validation + transparency metadata ───────
+    output_guard = run_output_guardrails(result, full_evidence_final, pii_lookup)
+    result = output_guard.result
+    if output_guard.guardrail_warnings:
+        for w in output_guard.guardrail_warnings:
+            print(f"   ⚠️ Output guardrail: {w}")
 
     # ── Step 5: Optional harvest — add web results to KB ──────────────
     _maybe_harvest_web_results_to_kb(
@@ -168,6 +196,14 @@ def verify_claim(claim: str) -> dict:
     print(f"\n{'='*60}")
     print(f"VERDICT: {result['verdict']}")
     print(f"{'='*60}\n")
+
+    result = attach_compliance_metadata(result, claim)
+    log_path = write_audit_log(
+        result,
+        session_id=result.get("compliance_metadata", {}).get("audit_session_id"),
+    )
+    if log_path:
+        print(f"📋 Audit log written: {log_path}")
 
     return result
 
