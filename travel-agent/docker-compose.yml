@@ -20,7 +20,7 @@ services:
     ports:
       - "8501:8501"
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-travel_agent}:${POSTGRES_PASSWORD:-travel_agent_secret}@postgres:5432/${POSTGRES_DB:-travel_agent}
     depends_on:
