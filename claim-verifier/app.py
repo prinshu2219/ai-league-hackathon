@@ -173,6 +173,23 @@ with st.sidebar:
     """)
 
     st.divider()
+    st.subheader("🛡️ Safety & Guardrails")
+    st.markdown("""
+    - **5-layer guardrail pipeline** (input → prompt → grounding → output → audit)
+    - **PII masking** before API calls (email, phone, IDs)
+    - **Bias detection** on source diversity & tier distribution
+    - **Citation validation** against retrieved evidence
+    - **Red team suite:** `python scripts/run_red_team_suite.py`
+    """)
+
+    st.subheader("📋 Compliance")
+    st.markdown("""
+    - **EU AI Act:** Limited-risk — AI disclosure shown
+    - **GDPR / DPDP:** PII mask, data minimization
+    - **Audit log:** `data/audit_logs/` (redacted)
+    """)
+
+    st.divider()
     st.caption("Built with LangChain + GPT-4o + ChromaDB")
 
 
@@ -182,6 +199,10 @@ with st.sidebar:
 
 st.title("🔍 AI Claim Verifier")
 st.markdown("*Fact-check any claim using AI-powered RAG with real-time web search*")
+st.info(
+    "🤖 **AI Disclosure:** This is an AI-powered fact-checking tool (EU AI Act: limited-risk). "
+    "Results may contain errors — always verify critical claims with primary sources."
+)
 st.divider()
 
 # ── Session state: keep claim text across runs (fixes reset on Verify click) ──
@@ -287,6 +308,71 @@ if verify_button and claim_input.strip():
     eq = result.get("evidence_quality", "NONE")
     eq_emoji = {"STRONG": "🟢", "WEAK": "🟡", "NONE": "🔴"}.get(eq, "⚪")
     st.markdown(f"**Evidence Quality:** {eq_emoji} **{eq}**")
+    st.divider()
+
+    # ── Safety & Guardrails Audit ─────────────────────────────────────────────
+    safety = result.get("safety_metadata", {})
+    if safety or result.get("blocked_by_guardrails"):
+        with st.expander("🛡️ Safety & Guardrails Audit", expanded=bool(result.get("blocked_by_guardrails"))):
+            if result.get("blocked_by_guardrails"):
+                st.warning(f"Request blocked: {safety.get('block_reason', 'Input guardrail violation')}")
+
+            layers = safety.get("guardrail_layers_applied", [])
+            if layers:
+                st.markdown("**Layers applied:** " + " → ".join(layers))
+
+            if safety.get("pii_masked_types"):
+                st.info(f"PII masked before API calls: {len(safety['pii_masked_types'])} token(s)")
+
+            if safety.get("pii_leak_detected"):
+                st.error("PII validation flagged a potential leak — reasoning was redacted.")
+
+            removed = safety.get("citations_removed_count", 0)
+            if removed:
+                st.warning(f"Removed {removed} citation(s) not found in retrieved evidence.")
+
+            if safety.get("bias_detected"):
+                st.warning(
+                    f"Source bias signals detected. "
+                    f"Diversity score: {safety.get('source_diversity_score', 'N/A')}"
+                )
+                tiers = safety.get("tier_distribution", {})
+                if tiers:
+                    st.caption(f"Source tier distribution: {tiers}")
+
+            for w in safety.get("guardrail_warnings", []):
+                st.caption(f"• {w}")
+
+    # ── Compliance & Regulatory ───────────────────────────────────────────────
+    compliance = result.get("compliance_metadata", {})
+    if compliance:
+        with st.expander("📋 Compliance & Regulatory Metadata", expanded=False):
+            st.markdown(f"**EU AI Act category:** `{compliance.get('eu_ai_act_risk_category', 'N/A')}`")
+            st.caption(compliance.get("eu_ai_act_requirement", ""))
+
+            regs = compliance.get("regulations_addressed", {})
+            if regs:
+                st.markdown("**Regulations addressed:**")
+                for reg, note in regs.items():
+                    st.caption(f"• **{reg}:** {note}")
+
+            processors = compliance.get("data_processors", [])
+            if processors:
+                st.markdown("**Third-party data processors:**")
+                for p in processors:
+                    st.caption(f"• {p.get('name')} — {p.get('purpose')} ({p.get('region')})")
+
+            if compliance.get("human_review_recommended"):
+                st.warning(
+                    f"👤 Human review recommended: {compliance.get('human_review_reason', 'Sensitive topic')}"
+                )
+
+            topics = compliance.get("sensitive_topics", [])
+            if topics:
+                st.caption(f"Sensitive topics detected: {', '.join(topics)}")
+
+            st.caption(f"Audit session ID: `{compliance.get('audit_session_id', 'N/A')}`")
+
     st.divider()
 
     # ── Agent Thinking Steps ──────────────────────────────────────────────────
