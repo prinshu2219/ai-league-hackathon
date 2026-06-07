@@ -1,0 +1,8 @@
+.env
+artifacts/
+data/
+hf_cache/
+venv/
+__pycache__/
+*.pyc
+
